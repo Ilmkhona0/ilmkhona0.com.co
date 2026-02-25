@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch4jConfig>
+  <dontWrapJar>false</dontWrapJar>
+  <headerType>gui</headerType>
+  <jar>D:\node.js-folder_resources2\Eclipse\GuessingGame\src\GuessingGame.jar</jar>
+  <outfile>D:\node.js-folder_resources2\Eclipse\GuessingGame\src\GuessingGame.exe</outfile>
+  <errTitle></errTitle>
+  <cmdLine></cmdLine>
+  <chdir>.</chdir>
+  <priority>normal</priority>
+  <downloadUrl></downloadUrl>
+  <supportUrl></supportUrl>
+  <stayAlive>false</stayAlive>
+  <restartOnCrash>false</restartOnCrash>
+  <manifest></manifest>
+  <icon>D:\node.js-folder_resources2\Eclipse\GuessingGame\src\icon_numbers_sif_icon.ico</icon>
+  <classPath>
+    <mainClass>GuessingGame</mainClass>
+  </classPath>
+  <jre>
+    <path>C:\Program Files\jdk-21.0.5</path>
+    <requiresJdk>false</requiresJdk>
+    <requires64Bit>false</requires64Bit>
+    <minVersion>21.0.0</minVersion>
+    <maxVersion>21.0.5</maxVersion>
+  </jre>
+</launch4jConfig>
