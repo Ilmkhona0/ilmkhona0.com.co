@@ -27,6 +27,7 @@ if (process.env.NODE_ENV === 'development') {
   clientPromise = client.connect();
 }
 
-export default clientPromise;
+const typedClientPromise: Promise<MongoClient> = clientPromise;
+export default typedClientPromise;
 
 
