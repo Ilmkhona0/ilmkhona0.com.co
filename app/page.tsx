@@ -3,9 +3,21 @@ import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
 
 export default function HomePage() {
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [hoveredApp, setHoveredApp] = useState<string|null>(null);
-  const [comments, setComments] = useState<{message: string, date: string}[]>([]);
+  const [comments, setComments] = useState<any[]>([]);
+  const [replyTo, setReplyTo] = useState<string|null>(null);
+  const [showReplies, setShowReplies] = useState<string|null>(null);
+  const [liked, setLiked] = useState<{[key:string]: 'like'|'dislike'|null}>({});
+
+  // Load like/dislike state from localStorage
+  useEffect(() => {
+    const stored = localStorage.getItem('commentVotes');
+    if (stored) {
+      setLiked(JSON.parse(stored));
+    }
+  }, []);
   const [isAdmin, setIsAdmin] = useState(false);
   const [showComments, setShowComments] = useState(false);
 
@@ -13,22 +25,37 @@ export default function HomePage() {
     setSidebarOpen((prev) => !prev);
   };
 
+  // Make fetchComments available everywhere
+  const fetchComments = async () => {
+    const res = await fetch('/api/comments');
+    if (res.ok) {
+      setComments(await res.json());
+    }
+  };
+
+  const handleLikeDislike = async (commentId: string, action: 'like'|'dislike') => {
+    // Only allow one like/dislike per comment
+    if (liked[commentId] === action) return;
+    const updated = { ...liked, [commentId]: action };
+    setLiked(updated);
+    localStorage.setItem('commentVotes', JSON.stringify(updated));
+    await fetch('/api/comments', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commentId, action })
+    });
+    fetchComments();
+  };
 
   // Fetch comments and check admin on mount
   useEffect(() => {
-    const fetchComments = async () => {
-      const res = await fetch('/api/comments');
-      if (res.ok) {
-        setComments(await res.json());
-      }
-    };
     fetchComments();
     if (globalThis.window) {
       setIsAdmin(localStorage.getItem('isAdmin') === 'true');
     }
   }, []);
 
-  const handleCommentSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleCommentSubmit = async (e: React.FormEvent<HTMLFormElement>, parentId?: string) => {
     e.preventDefault();
     const form = e.currentTarget;
     const message = (form.elements.namedItem('message') as HTMLTextAreaElement)?.value;
@@ -36,10 +63,11 @@ export default function HomePage() {
     const res = await fetch('/api/comments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify(parentId ? { message, parentId } : { message }),
     });
     if (res.ok) {
       form.reset();
+      setReplyTo(null);
       fetchComments();
     }
   };
@@ -216,9 +244,122 @@ export default function HomePage() {
             </form>
 
             <div id="comments" className="comments-list">
-              {comments.length === 0 && <p>No comments yet.</p>}
-              {comments.map((c) => (
-                <p key={c.date + c.message}><strong>{c.message}</strong> <span style={{fontSize:'0.8em',color:'#888'}}>{new Date(c.date).toLocaleString()}</span></p>
+              {comments.filter(c => !c.parentId).length === 0 && <p>No comments yet.</p>}
+              {comments.filter(c => !c.parentId).map((c) => (
+                <div key={c._id} style={{marginBottom:16, borderBottom:'1px solid #eee', paddingBottom:8}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <strong>{c.message}</strong>
+                    <span style={{fontSize:'0.8em',color:'#888'}}>{new Date(c.date).toLocaleString()}</span>
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',gap:12,marginTop:4}}>
+                    <button
+                      type="button"
+                      aria-label="Like"
+                      style={{
+                        background:'none',
+                        border:'none',
+                        cursor:'pointer',
+                        color: liked[c._id]==='like' ? 'gold' : '#222',
+                        opacity: liked[c._id]==='like' ? 1 : 0.7,
+                        fontWeight: liked[c._id]==='like' ? 'bold' : 'normal',
+                        fontSize: 18
+                      }}
+                      onClick={()=>handleLikeDislike(c._id,'like')}
+                    >
+                      <span style={{marginRight:4}}>👍</span> {c.likes || 0}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Dislike"
+                      style={{
+                        background:'none',
+                        border:'none',
+                        cursor:'pointer',
+                        color: liked[c._id]==='dislike' ? 'gold' : '#222',
+                        opacity: liked[c._id]==='dislike' ? 1 : 0.7,
+                        fontWeight: liked[c._id]==='dislike' ? 'bold' : 'normal',
+                        fontSize: 18
+                      }}
+                      onClick={()=>handleLikeDislike(c._id,'dislike')}
+                    >
+                      <span style={{marginRight:4}}>👎</span> {c.dislikes || 0}
+                    </button>
+                    <button type="button" aria-label="Reply" style={{background:'none',border:'none',color:'#0070f3',cursor:'pointer'}} onClick={()=>setReplyTo(c._id)}>
+                      Reply
+                    </button>
+                    {c.replyCount > 0 && (
+                      <button type="button" aria-label="Show replies" style={{background:'none',border:'none',color:'#0070f3',cursor:'pointer'}} onClick={()=>setShowReplies(showReplies===c._id?null:c._id)}>
+                        {showReplies===c._id ? 'Hide' : 'Show'} {c.replyCount} {c.replyCount === 1 ? 'reply' : 'replies'}
+                      </button>
+                    )}
+                  </div>
+                  {replyTo === c._id && (
+                    <form className="form-container" style={{marginTop:8}} onSubmit={e=>handleCommentSubmit(e, c._id)}>
+                      <label htmlFor={`reply-textarea-${c._id}`}>Your Reply</label>
+                      <textarea id={`reply-textarea-${c._id}`} name="message" rows={2} required></textarea>
+                      <button type="submit">Submit</button>
+                      <button type="button" style={{marginLeft:8}} onClick={()=>setReplyTo(null)}>Cancel</button>
+                    </form>
+                  )}
+                  {/* Replies */}
+                  {showReplies===c._id && comments.filter(r=>r.parentId===c._id).length > 0 && (
+                    <div style={{marginLeft:24,marginTop:8,background:'#fafafa',borderRadius:8,padding:8}}>
+                      {comments.filter(r=>r.parentId===c._id).map(r=>(
+                        <div key={r._id} style={{marginBottom:8}}>
+                          <div style={{display:'flex',alignItems:'center',gap:8}}>
+                            <strong>{r.message}</strong>
+                            <span style={{fontSize:'0.8em',color:'#888'}}>{new Date(r.date).toLocaleString()}</span>
+                          </div>
+                          <div style={{display:'flex',alignItems:'center',gap:12,marginTop:2}}>
+                            <button
+                              type="button"
+                              aria-label="Like"
+                              style={{
+                                background:'none',
+                                border:'none',
+                                cursor:'pointer',
+                                color: liked[r._id]==='like' ? 'gold' : '#222',
+                                opacity: liked[r._id]==='like' ? 1 : 0.7,
+                                fontWeight: liked[r._id]==='like' ? 'bold' : 'normal',
+                                fontSize: 18
+                              }}
+                              onClick={()=>handleLikeDislike(r._id,'like')}
+                            >
+                              <span style={{marginRight:4}}>👍</span> {r.likes || 0}
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="Dislike"
+                              style={{
+                                background:'none',
+                                border:'none',
+                                cursor:'pointer',
+                                color: liked[r._id]==='dislike' ? 'gold' : '#222',
+                                opacity: liked[r._id]==='dislike' ? 1 : 0.7,
+                                fontWeight: liked[r._id]==='dislike' ? 'bold' : 'normal',
+                                fontSize: 18
+                              }}
+                              onClick={()=>handleLikeDislike(r._id,'dislike')}
+                            >
+                              <span style={{marginRight:4}}>👎</span> {r.dislikes || 0}
+                            </button>
+                            <button type="button" aria-label="Reply" style={{background:'none',border:'none',color:'#0070f3',cursor:'pointer'}} onClick={()=>setReplyTo(r._id)}>
+                              Reply
+                            </button>
+                          </div>
+                          {replyTo === r._id && (
+                            <form className="form-container" style={{marginTop:8}} onSubmit={e=>handleCommentSubmit(e, r._id)}>
+                              <label htmlFor={`reply-textarea-${r._id}`}>Your Reply</label>
+                              <textarea id={`reply-textarea-${r._id}`} name="message" rows={2} required></textarea>
+                              <button type="submit">Submit</button>
+                              <button type="button" style={{marginLeft:8}} onClick={()=>setReplyTo(null)}>Cancel</button>
+                            </form>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           </section>
