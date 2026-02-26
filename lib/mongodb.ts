@@ -28,6 +28,12 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 
+
 const typedClientPromise: Promise<MongoClient> = clientPromise;
 export default typedClientPromise;
+
+
+const typedClientPromise: Promise<MongoClient> = clientPromise;
+export default typedClientPromise;
+
 
