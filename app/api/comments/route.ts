@@ -34,7 +34,7 @@ export async function GET() {
     // Fetch all comments
     const comments = await db.collection('comments').find({}).sort({ date: -1 }).toArray();
     // Add replyCount for each top-level comment
-    const replyCounts = {};
+    const replyCounts: Record<string, number> = {};
     comments.forEach(c => {
       if (c.parentId) {
         const pid = c.parentId.toString();
