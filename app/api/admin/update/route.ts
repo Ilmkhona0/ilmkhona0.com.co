@@ -10,6 +10,9 @@ export async function PUT(req: any) {
 		// const result = await db.collection('yourCollection').updateOne(...);
 		return NextResponse.json({ message: "Database update successful" });
 	} catch (error) {
-		return NextResponse.json({ error: error.message }, { status: 500 });
+	    let message = "Unknown error";
+		if (error && typeof error === "object" && "message" in error) {
+			message = (error as { message?: string }).message ?? message;
+		}
+		return NextResponse.json({ error: message }, { status: 500 });
 	}
-}
