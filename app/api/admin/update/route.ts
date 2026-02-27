@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import clientPromise from "../../../../lib/mongodb";
 import { MongoClient } from "mongodb";
 
+export async function PUT(req: any) {
 	try {
 		const client = await clientPromise as MongoClient;
 		const db = client.db();
@@ -15,3 +16,4 @@ import { MongoClient } from "mongodb";
 		}
 		return NextResponse.json({ error: message }, { status: 500 });
 	}
+}
