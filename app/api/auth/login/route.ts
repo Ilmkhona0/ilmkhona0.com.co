@@ -28,7 +28,8 @@ export async function POST(req: NextRequest) {
 
   // USER LOGIN: check by username or email
   try {
-    const client: MongoClient = await clientPromise;
+    const client = await clientPromise as MongoClient;
+    if (!client) throw new Error("MongoClient not initialized");
     const db = client.db();
     const user = await db.collection('users').findOne({
       $or: [
