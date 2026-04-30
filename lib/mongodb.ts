@@ -1,34 +1,33 @@
+import { MongoClient, type MongoClientOptions } from "mongodb";
+
+// Extend the Node global type so TypeScript knows about our cached promise.
 declare global {
-  // ...existing code commented out...
+    // eslint-disable-next-line no-var
+  var _mongoClientPromise: Promise<MongoClient> | undefined;
 }
-// MongoDB temporarily disabled for deployment
-import { MongoClient } from 'mongodb';
 
 const uri = process.env.MONGODB_URI;
-const options = {};
+const options: MongoClientOptions = {};
 
-let client;
-let clientPromise: Promise<MongoClient> | undefined;
-
-if (!process.env.MONGODB_URI) {
-  throw new Error('Please add your MongoDB URI to .env.local');
+if (!uri) {
+    throw new Error(
+          "Missing environment variable MONGODB_URI. Set it locally in .env.local and on Vercel under Project Settings -> Environment Variables."
+        );
 }
 
-if (process.env.NODE_ENV === 'development') {
-  // In development, use a global variable so the value is preserved across module reloads
+let clientPromise: Promise<MongoClient>;
+
+if (process.env.NODE_ENV === "development") {
+    // In development, reuse the connection across HMR reloads.
   if (!global._mongoClientPromise) {
-    client = new MongoClient(uri, options);
-    global._mongoClientPromise = client.connect();
+        const client = new MongoClient(uri, options);
+        global._mongoClientPromise = client.connect();
   }
-  clientPromise = global._mongoClientPromise;
+    clientPromise = global._mongoClientPromise;
 } else {
-  // In production, create a new client for every connection
-  client = new MongoClient(uri, options);
-  clientPromise = client.connect();
+    // In production each lambda gets its own client.
+  const client = new MongoClient(uri, options);
+    clientPromise = client.connect();
 }
 
 export default clientPromise;
-const typedClientPromise: Promise<MongoClient> = clientPromise;
-// export default typedClientPromise;
-
-
