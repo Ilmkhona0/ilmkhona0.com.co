@@ -36,6 +36,16 @@ yarn-error.log*
 # vercel
 .vercel
 
+# Local upload fallback - real files live in Vercel Blob, never commit dev test data.
+# Also keeps Google Safe Browsing from flagging the site for serving executables.
+/public/uploads
+/public/games
+*.exe
+*.jar
+*.apk
+*.msi
+*.dmg
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

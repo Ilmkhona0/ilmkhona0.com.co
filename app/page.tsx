@@ -99,12 +99,8 @@ export default function HomePage() {
     images: null, videos: null, apps: null, games: null, files: null,
   });
 
-  // Comments
-  const [comments, setComments] = useState<Comment[]>([
-    { id: "c1", author: "Alice", text: "Sample image looks great!", date: "2026-04-28T12:00:00Z", likes: 3, dislikes: 0, parentId: null },
-    { id: "c2", author: "Bob",   text: "Nice collection.",          date: "2026-04-29T09:30:00Z", likes: 1, dislikes: 0, parentId: null },
-    { id: "c3", author: "Bob",   text: "Thanks Alice!",              date: "2026-04-29T15:45:00Z", likes: 0, dislikes: 0, parentId: "c1" },
-  ]);
+  // Comments — loaded from MongoDB (/api/comments)
+  const [comments, setComments] = useState<Comment[]>([]);
   const [votes, setVotes] = useState<Record<string, Vote>>({});
   const [commentText, setCommentText] = useState("");
   const [replyOpen, setReplyOpen] = useState<Record<string, boolean>>({});
@@ -148,8 +144,21 @@ export default function HomePage() {
     }
     // load all folders in parallel
     FOLDERS.forEach(refreshFolder);
+    // load comments from DB
+    refreshComments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function refreshComments() {
+    try {
+      const res = await fetch("/api/comments", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data)) setComments(data);
+    } catch {
+      // network error -> keep whatever we have on screen
+    }
+  }
 
   async function refreshFolder(folder: Folder) {
     try {
@@ -202,44 +211,57 @@ export default function HomePage() {
     setIsAdmin(false);
   }
 
-  function submitComment() {
+  async function submitComment() {
     if (!user) return alert("Please log in to post a comment.");
     const text = commentText.trim();
     if (!text) return alert("Comment cannot be empty.");
-    const newComment: Comment = {
-      id: `c${Date.now()}`,
-      author: user.username || user.name || user.email || "You",
-      authorId: user.id,
-      text,
-      date: new Date().toISOString(),
-      likes: 0, dislikes: 0, parentId: null,
-    };
-    setComments((prev) => [newComment, ...prev]);
-    setCommentText("");
+    const author = user.username || user.name || user.email || "You";
+    try {
+      const res = await fetch("/api/comments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, author, authorId: user.id, parentId: null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        return alert(data.error || "Failed to post comment");
+      }
+      setCommentText("");
+      await refreshComments();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to post comment");
+    }
   }
 
-  function submitReply(parentId: string) {
+  async function submitReply(parentId: string) {
     if (!user) return alert("Please log in to reply.");
     const text = (replyText[parentId] || "").trim();
     if (!text) return;
-    const newReply: Comment = {
-      id: `c${Date.now()}`,
-      author: user.username || user.name || user.email || "You",
-      authorId: user.id,
-      text,
-      date: new Date().toISOString(),
-      likes: 0, dislikes: 0, parentId,
-    };
-    setComments((prev) => [...prev, newReply]);
-    setReplyText((prev) => ({ ...prev, [parentId]: "" }));
-    setReplyOpen((prev) => ({ ...prev, [parentId]: false }));
-    setShowReplies((prev) => ({ ...prev, [parentId]: true }));
+    const author = user.username || user.name || user.email || "You";
+    try {
+      const res = await fetch("/api/comments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, author, authorId: user.id, parentId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        return alert(data.error || "Failed to post reply");
+      }
+      setReplyText((prev) => ({ ...prev, [parentId]: "" }));
+      setReplyOpen((prev) => ({ ...prev, [parentId]: false }));
+      setShowReplies((prev) => ({ ...prev, [parentId]: true }));
+      await refreshComments();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to post reply");
+    }
   }
 
-  function voteComment(commentId: string, type: "like" | "dislike") {
+  async function voteComment(commentId: string, type: "like" | "dislike") {
     if (!user) return alert("Please log in to vote.");
     const current = votes[commentId] || null;
     const next: Vote = current === type ? null : type;
+    // Optimistic UI update
     setComments((prev) =>
       prev.map((c) => {
         if (c.id !== commentId) return c;
@@ -252,11 +274,54 @@ export default function HomePage() {
       })
     );
     setVotes((prev) => ({ ...prev, [commentId]: next }));
+    // Persist (only the "next" action; we don't currently undo on the server)
+    if (next) {
+      try {
+        await fetch("/api/comments", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ commentId, action: next }),
+        });
+      } catch {
+        // leave optimistic state; user can retry
+      }
+    }
   }
 
-  function removeComment(commentId: string) {
+  async function removeComment(commentId: string) {
     if (!isAdmin) return;
-    setComments((prev) => prev.filter((c) => c.id !== commentId && c.parentId !== commentId));
+    if (!confirm("Delete this comment and any replies?")) return;
+    try {
+      const res = await fetch(`/api/comments?id=${encodeURIComponent(commentId)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        return alert(data.error || "Failed to delete");
+      }
+      await refreshComments();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete");
+    }
+  }
+
+  async function blockAuthor(c: Comment) {
+    if (!isAdmin) return;
+    if (!confirm(`Block "${c.author}"?\nThey will no longer be able to log in, register, or post comments.`)) return;
+    try {
+      const res = await fetch("/api/admin/block", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: c.author, email: c.author }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        return alert(data.error || "Failed to block user");
+      }
+      alert(`Blocked ${c.author}.`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to block user");
+    }
   }
 
   const topLevel = comments.filter((c) => !c.parentId);
@@ -331,7 +396,10 @@ export default function HomePage() {
             <button className="reply-btn" onClick={() => setReplyOpen((p) => ({ ...p, [c.id]: !p[c.id] }))}>Reply</button>
           )}
           {isAdmin && (
-            <button className="delete-btn" onClick={() => removeComment(c.id)}>Delete</button>
+            <>
+              <button className="delete-btn" onClick={() => removeComment(c.id)}>Delete</button>
+              <button className="block-btn" onClick={() => blockAuthor(c)} title="Block this user from the site">Block</button>
+            </>
           )}
         </div>
         {!isReply && replyOpen[c.id] && (
@@ -371,7 +439,14 @@ export default function HomePage() {
       <header>
         <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 20px", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-            <button aria-label="Toggle menu" onClick={() => setMobileMenuOpen((p) => !p)} className="hamburger">☰</button>
+            <button
+              aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+              aria-expanded={mobileMenuOpen}
+              onClick={() => setMobileMenuOpen((p) => !p)}
+              className={`hamburger ${mobileMenuOpen ? "is-open" : ""}`}
+            >
+              {mobileMenuOpen ? "✕" : "☰"}
+            </button>
             <div className="site-title" style={{ fontWeight: 700, fontSize: 22 }}>ilmkhona0</div>
             <nav className="top-nav">
               <a href="#images">Images</a>

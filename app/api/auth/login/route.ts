@@ -31,6 +31,25 @@ export async function POST(req: NextRequest) {
     const client = await clientPromise as MongoClient;
     if (!client) throw new Error("MongoClient not initialized");
     const db = client.db();
+
+    // BLOCK CHECK: refuse if email or username is on the blocked list
+    const blockClauses: Record<string, string>[] = [];
+    if (email) {
+      blockClauses.push({ email }, { username: email });
+    }
+    if (username) {
+      blockClauses.push({ username }, { email: username });
+    }
+    if (blockClauses.length > 0) {
+      const blocked = await db.collection("blocked").findOne({ $or: blockClauses });
+      if (blocked) {
+        return NextResponse.json(
+          { error: "This account has been blocked." },
+          { status: 403 }
+        );
+      }
+    }
+
     const user = await db.collection('users').findOne({
       $or: [
         { email, password },

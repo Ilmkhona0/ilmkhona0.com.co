@@ -9,6 +9,21 @@ export async function POST(req: NextRequest) {
   try {
     const client: MongoClient = await clientPromise;
     const db = client.db();
+
+    // BLOCK CHECK: refuse re-registration with a blocked email or username.
+    if (data.email || data.username) {
+      const blockClauses: Record<string, string>[] = [];
+      if (data.email) blockClauses.push({ email: data.email }, { username: data.email });
+      if (data.username) blockClauses.push({ username: data.username }, { email: data.username });
+      const blocked = await db.collection("blocked").findOne({ $or: blockClauses });
+      if (blocked) {
+        return NextResponse.json(
+          { error: "This account has been blocked from the site." },
+          { status: 403 }
+        );
+      }
+    }
+
     // Check if user already exists (by email or username)
     const exists = await db.collection('users').findOne({ $or: [ { email: data.email }, { username: data.username } ] });
     if (exists) {
