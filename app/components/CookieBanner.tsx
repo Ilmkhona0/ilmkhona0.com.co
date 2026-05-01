@@ -32,9 +32,11 @@ export default function CookieBanner() {
 
   return (
     <div className="cookie-banner">
-      <span className="cookie-close" onClick={closeBanner} title="Close">&times;</span>
+      <span className="cookie-close" onClick={closeBanner} title="Close">
+        &times;
+      </span>
       <p>We use cookies to improve your experience. You can choose which cookies to accept.</p>
-      <div style={{ display: 'flex', gap: '10px', marginTop: 8 }}>
+      <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
         <button onClick={acceptAll}>Accept all cookies</button>
         <button onClick={acceptNecessary}>Accept only necessary</button>
       </div>
