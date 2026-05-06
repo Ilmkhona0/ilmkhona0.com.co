@@ -82,32 +82,39 @@ async function listFolder(folder: string): Promise<{ items: FileRow[]; storage: 
   if (process.env.VERCEL) return { items: [], storage: "none" };
 
   const { readdir, stat } = await import("fs/promises");
-  const { join } = await import("path");
-  const dir = join(process.cwd(), "public", "uploads", folder);
+  const { join, relative, sep } = await import("path");
+  const root = join(process.cwd(), "public", "uploads", folder);
 
-  let names: string[] = [];
+  // Recursive walker so folder uploads (with subdirectories) show up.
+  async function walk(dir: string, acc: FileRow[]): Promise<FileRow[]> {
+    let entries: string[] = [];
+    try { entries = await readdir(dir); } catch { return acc; }
+    for (const entry of entries) {
+      const full = join(dir, entry);
+      let s;
+      try { s = await stat(full); } catch { continue; }
+      if (s.isDirectory()) {
+        await walk(full, acc);
+      } else {
+        const rel = relative(root, full).split(sep).join("/");
+        acc.push({
+          name: rel,
+          url: `/uploads/${folder}/${rel}`,
+          size: s.size,
+          uploadedAt: s.mtime.toISOString(),
+          folder,
+        });
+      }
+    }
+    return acc;
+  }
+
   try {
-    names = await readdir(dir);
+    const items = await walk(root, []);
+    return { items, storage: "fs" };
   } catch {
     return { items: [], storage: "fs" };
   }
-
-  const items = await Promise.all(
-    names.map(async (name) => {
-      const full = join(dir, name);
-      let size = 0;
-      let uploadedAt = new Date(0).toISOString();
-      try {
-        const s = await stat(full);
-        size = s.size;
-        uploadedAt = s.mtime.toISOString();
-      } catch {
-        // ignore
-      }
-      return { name, url: `/uploads/${folder}/${name}`, size, uploadedAt, folder };
-    })
-  );
-  return { items, storage: "fs" };
 }
 
 export async function GET(req: NextRequest) {

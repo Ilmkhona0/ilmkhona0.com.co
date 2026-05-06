@@ -143,15 +143,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No file" }, { status: 400 });
     }
 
-    // Decide final name (custom-rename keeps original extension if user omits it)
+    // Decide final name (custom-rename keeps original extension if user omits it).
+    // customName may contain forward slashes for folder uploads — we keep them but
+    // strictly sanitise each path segment to prevent directory traversal.
     const origName = file.name;
     let finalName = origName;
     if (customName) {
-      const origExtMatch = /\.[a-z0-9]+$/i.exec(origName);
-      const ext = origExtMatch ? origExtMatch[0] : "";
-      finalName = /\.[a-z0-9]+$/i.test(customName) ? customName : customName + ext;
-      finalName = finalName.replace(/[\\/]/g, "").replace(/\s+/g, " ").trim();
-      if (!finalName) finalName = origName;
+      // Folder uploads pass the whole relative path (e.g. "myrepo/src/main.py").
+      // For path-style names we don't append the ext — the path already has the file at the end.
+      const looksLikePath = /[/\\]/.test(customName);
+      if (looksLikePath) {
+        finalName = customName
+          .replace(/\\/g, "/")            // normalise backslashes
+          .split("/")
+          .map((seg) => seg.trim())
+          .filter((seg) => seg && seg !== "." && seg !== "..")
+          .join("/");
+        if (!finalName) finalName = origName;
+      } else {
+        const origExtMatch = /\.[a-z0-9]+$/i.exec(origName);
+        const ext = origExtMatch ? origExtMatch[0] : "";
+        finalName = /\.[a-z0-9]+$/i.test(customName) ? customName : customName + ext;
+        finalName = finalName.replace(/[\\/]/g, "").replace(/\s+/g, " ").trim();
+        if (!finalName) finalName = origName;
+      }
     }
 
     // ---- Validate file type per folder ----
@@ -229,15 +244,15 @@ export async function POST(req: NextRequest) {
     }
 
     const { writeFile, mkdir } = await import("fs/promises");
-    const { join } = await import("path");
+    const { join, dirname } = await import("path");
 
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    const dir = join(process.cwd(), "public", "uploads", folder);
-    await mkdir(dir, { recursive: true });
-    const path = join(dir, finalName);
-    await writeFile(path, buffer);
+    // finalName may contain "/" for folder uploads. Walk into subdirectories.
+    const fullPath = join(process.cwd(), "public", "uploads", folder, finalName);
+    await mkdir(dirname(fullPath), { recursive: true });
+    await writeFile(fullPath, buffer);
 
     return NextResponse.json({
       success: true,

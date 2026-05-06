@@ -2061,6 +2061,161 @@ body {
   margin-top: 14px;
   display: flex; gap: 10px; flex-wrap: wrap;
 }
+
+/* Upload page — picker buttons (files vs folder) */
+.upload-pickers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 4px;
+}
+.upload-picker-btn {
+  background: linear-gradient(135deg, var(--brand-50), #ede9fe) !important;
+  border: 2px dashed var(--brand-200) !important;
+  color: var(--ink-900) !important;
+  border-radius: var(--radius) !important;
+  padding: 22px 18px !important;
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, transform .08s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: inherit;
+  font-weight: inherit;
+}
+.upload-picker-btn:hover {
+  background: linear-gradient(135deg, var(--brand-100), #ddd6fe) !important;
+  border-color: var(--brand-500) !important;
+}
+.upload-picker-btn:active { transform: scale(.99); }
+.upload-picker-btn i {
+  font-size: 26px;
+  color: var(--brand-600);
+}
+.upload-picker-btn strong {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink-900);
+  margin-top: 2px;
+}
+.upload-picker-btn span {
+  font-size: 13px;
+  color: var(--ink-500);
+}
+
+/* Upload page — multi-file row list */
+.upload-rows {
+  margin-top: 14px;
+  border: 1px solid rgba(15,23,42,0.08);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #fff;
+}
+.upload-rows-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+.upload-rows-scroll {
+  max-height: 380px;
+  overflow-y: auto;
+}
+.upload-rows-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: var(--ink-50);
+  border-bottom: 1px solid rgba(15,23,42,0.06);
+  font-size: 13px;
+  color: var(--ink-700);
+}
+.upload-clear-done {
+  background: transparent !important;
+  color: var(--brand-700) !important;
+  border: none;
+  padding: 4px 10px !important;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 6px !important;
+}
+.upload-clear-done:hover { background: var(--brand-50) !important; }
+.upload-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(15,23,42,0.04);
+  transition: background .12s ease;
+}
+.upload-row:last-child { border-bottom: none; }
+.upload-row > i:first-child {
+  width: 28px;
+  font-size: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.upload-row.status-pending  > i:first-child { color: var(--ink-500); }
+.upload-row.status-uploading > i:first-child { color: var(--brand-600); }
+.upload-row.status-done > i:first-child { color: var(--ok); }
+.upload-row.status-error > i:first-child { color: var(--err); }
+.upload-row.status-done { background: rgba(16,185,129,0.06); }
+.upload-row.status-error { background: rgba(239,68,68,0.06); }
+.upload-row-info {
+  flex: 1;
+  min-width: 0;
+}
+.upload-row-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink-900);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.upload-row-meta {
+  font-size: 12px;
+  color: var(--ink-500);
+  margin-top: 2px;
+}
+.upload-row-meta a {
+  color: var(--brand-700);
+  font-weight: 600;
+  text-decoration: none;
+}
+.upload-row-meta a:hover { text-decoration: underline; }
+.upload-row-error {
+  color: var(--err);
+  font-weight: 600;
+}
+.upload-row-remove {
+  background: transparent !important;
+  color: var(--ink-500) !important;
+  border: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 !important;
+  flex-shrink: 0;
+}
+.upload-row-remove:hover {
+  background: var(--ink-100) !important;
+  color: var(--ink-900) !important;
+}
+
+/* kbd hint */
+.upload-dropzone kbd {
+  background: var(--ink-100);
+  border: 1px solid var(--ink-300);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+  color: var(--ink-700);
+}
 .upload-link-btn {
   background: #fff;
   color: var(--ink-900) !important;

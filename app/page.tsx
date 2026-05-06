@@ -68,7 +68,9 @@ function isImageName(n: string)  { return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.tes
 function isVideoName(n: string)  { return /\.(mp4|webm|ogg|mov|avi|mkv)$/i.test(n); }
 function isAudioName(n: string)  { return /\.(mp3|wav|ogg|m4a|flac|aac)$/i.test(n); }
 function isPdfName(n: string)    { return /\.pdf$/i.test(n); }
-function isTextName(n: string)   { return /\.(txt|md|csv|log|json|xml|html?|css|js|ts|tsx|jsx|py|java|c|cpp|cs)$/i.test(n); }
+function isTextName(n: string)   {
+  return /\.(txt|md|markdown|csv|tsv|log|json|jsonl|ndjson|xml|ya?ml|toml|ini|conf|cfg|env|html?|x?html|css|scss|sass|less|js|mjs|cjs|ts|tsx|jsx|vue|svelte|astro|py|pyw|rb|php|java|kt|kts|scala|groovy|c|h|cc|cpp|cxx|hpp|hxx|m|mm|cs|vb|fs|go|rs|swift|dart|lua|pl|pm|r|jl|sh|bash|zsh|fish|ps1|bat|cmd|sql|graphql|gql|proto|sol|tex|asm|s|nim|zig|hs|clj|cljs|ex|exs|erl|hrl|elm|ml|mli|pas|pp|d|coffee|patch|diff|gitignore|dockerignore|editorconfig|prettierrc|eslintrc|env|lock)$/i.test(n);
+}
 function isOfficeName(n: string) { return /\.(docx?|xlsx?|pptx?)$/i.test(n); }
 function canPreview(n: string) {
   return isImageName(n) || isVideoName(n) || isAudioName(n) || isPdfName(n) || isTextName(n) || isOfficeName(n);
@@ -199,17 +201,37 @@ export default function HomePage() {
     }
   }
 
-  async function handleFilePicked(folder: Folder, file: File) {
+  async function handleFilesPicked(folder: Folder, files: FileList) {
+    if (!files.length) return;
     setUploading(folder);
+    const failures: string[] = [];
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("folder", folder);
-      const res = await fetch("/api/admin/upload", { method: "POST", body: fd });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        alert(data.error || "Upload failed"); return;
+      // Upload up to 4 in parallel
+      const queue = Array.from(files);
+      const concurrency = Math.min(4, queue.length);
+      const workers: Promise<void>[] = [];
+      for (let i = 0; i < concurrency; i++) {
+        workers.push((async () => {
+          while (queue.length) {
+            const f = queue.shift();
+            if (!f) break;
+            const fd = new FormData();
+            fd.append("file", f);
+            fd.append("folder", folder);
+            try {
+              const res = await fetch("/api/admin/upload", { method: "POST", body: fd });
+              if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                failures.push(`${f.name}: ${data.error || res.status}`);
+              }
+            } catch (err) {
+              failures.push(`${f.name}: ${err instanceof Error ? err.message : "network error"}`);
+            }
+          }
+        })());
       }
+      await Promise.all(workers);
+      if (failures.length) alert(`Some uploads failed:\n${failures.join("\n")}`);
       await refreshFolder(folder);
     } finally {
       setUploading(null);
@@ -358,10 +380,11 @@ export default function HomePage() {
           ref={(el) => { fileInputs.current[folder] = el; }}
           type="file"
           accept={accept}
+          multiple
           style={{ display: "none" }}
           onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) handleFilePicked(folder, f);
+            const fs = e.target.files;
+            if (fs && fs.length) handleFilesPicked(folder, fs);
             e.target.value = "";
           }}
         />
@@ -592,6 +615,7 @@ export default function HomePage() {
                           isAudioName(it.name) ? "fa-music" :
                           isPdfName(it.name) ? "fa-file-pdf" :
                           isOfficeName(it.name) ? "fa-file-word" :
+                          /\.(py|pyw|rb|php|java|kt|scala|c|h|cc|cpp|cxx|hpp|cs|vb|fs|go|rs|swift|dart|lua|pl|r|jl|js|mjs|cjs|ts|tsx|jsx|vue|svelte|sh|bash|ps1|bat|cmd|sql|graphql|sol|asm|nim|zig|hs|clj|ex|erl|elm|ml|coffee)$/i.test(it.name) ? "fa-file-code" :
                           isTextName(it.name) ? "fa-file-lines" :
                           /\.(exe|msi|app|dmg)$/i.test(it.name) ? "fa-window-maximize" :
                           /\.apk$/i.test(it.name) ? "fa-mobile-screen" :
