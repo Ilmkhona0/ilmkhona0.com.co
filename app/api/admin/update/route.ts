@@ -1,19 +1,12 @@
 import { NextResponse } from "next/server";
-import clientPromise from "../../../../lib/mongodb";
-import { MongoClient } from "mongodb";
 
-export async function PUT(req: any) {
-	try {
-		const client = await clientPromise as MongoClient;
-		const db = client.db();
-		// Example: update logic (replace with your actual update code)
-		// const result = await db.collection('yourCollection').updateOne(...);
-		return NextResponse.json({ message: "Database update successful" });
-	} catch (error) {
-		let message = "Unknown error";
-		if (error && typeof error === "object" && "message" in error) {
-			message = (error as { message?: string }).message ?? message;
-		}
-		return NextResponse.json({ error: message }, { status: 500 });
-	}
+// /api/admin/update was removed. Returns 410 Gone for any caller.
+export async function GET() {
+  return NextResponse.json({ error: "Endpoint removed" }, { status: 410 });
+}
+export async function POST() {
+  return NextResponse.json({ error: "Endpoint removed" }, { status: 410 });
+}
+export async function PUT() {
+  return NextResponse.json({ error: "Endpoint removed" }, { status: 410 });
 }

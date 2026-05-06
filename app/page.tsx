@@ -29,52 +29,41 @@ type FileItem = {
   url: string;
   size?: number;
   uploadedAt?: string;
+  folder?: string;
 };
 
 const FOLDERS = ["images", "videos", "apps", "games", "files"] as const;
 type Folder = (typeof FOLDERS)[number];
 
-function MediaPlaceholder({ label, height = 140 }: { label: string; height?: number }) {
-  return (
-    <div
-      style={{
-        width: "100%",
-        height,
-        borderRadius: 8,
-        background: "linear-gradient(135deg, #1f2937 0%, #111827 100%)",
-        color: "#e5e7eb",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontWeight: 700,
-        letterSpacing: 1,
-        fontSize: 14,
-        textAlign: "center",
-        padding: 8,
-      }}
-    >
-      {label}
-    </div>
-  );
-}
+// Number of items shown on the homepage per section. The full list lives at /category/<folder>.
+const PREVIEW_LIMIT = 6;
+
+const SECTION_LABEL: Record<Folder, string> = {
+  images: "Images",
+  videos: "Videos",
+  apps: "Apps",
+  games: "Games",
+  files: "Files",
+};
+
+const SECTION_ICON: Record<Folder, string> = {
+  images: "fa-images",
+  videos: "fa-video",
+  apps: "fa-mobile-screen",
+  games: "fa-gamepad",
+  files: "fa-folder-open",
+};
 
 function formatDate(iso: string): string {
   try {
     const d = new Date(iso);
     return d.toLocaleString("en-US", {
-      year: "numeric",
-      month: "numeric",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
+      year: "numeric", month: "numeric", day: "numeric",
+      hour: "numeric", minute: "2-digit", hour12: true,
     });
-  } catch {
-    return iso;
-  }
+  } catch { return iso; }
 }
 
-// File-type detection by extension
 function isImageName(n: string)  { return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(n); }
 function isVideoName(n: string)  { return /\.(mp4|webm|ogg|mov|avi|mkv)$/i.test(n); }
 function isAudioName(n: string)  { return /\.(mp3|wav|ogg|m4a|flac|aac)$/i.test(n); }
@@ -89,17 +78,19 @@ export default function HomePage() {
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
 
-  // Real uploads, fetched per folder
   const [files, setFiles] = useState<Record<Folder, FileItem[]>>({
     images: [], videos: [], apps: [], games: [], files: [],
+  });
+  const [counts, setCounts] = useState<Record<Folder, number>>({
+    images: 0, videos: 0, apps: 0, games: 0, files: 0,
   });
   const [uploading, setUploading] = useState<Folder | null>(null);
   const fileInputs = useRef<Record<Folder, HTMLInputElement | null>>({
     images: null, videos: null, apps: null, games: null, files: null,
   });
 
-  // Comments — loaded from MongoDB (/api/comments)
   const [comments, setComments] = useState<Comment[]>([]);
   const [votes, setVotes] = useState<Record<string, Vote>>({});
   const [commentText, setCommentText] = useState("");
@@ -108,20 +99,45 @@ export default function HomePage() {
   const [showReplies, setShowReplies] = useState<Record<string, boolean>>({});
   const [commentsOpen, setCommentsOpen] = useState(false);
 
-  // Lightbox / preview modal
   type ViewerSize = "small" | "large" | "full";
   const [preview, setPreview] = useState<{ folder: Folder; item: FileItem } | null>(null);
   const [viewerSize, setViewerSize] = useState<ViewerSize>("large");
+
+  // Hero search
+  const [searchQ, setSearchQ] = useState("");
+  const [searchResults, setSearchResults] = useState<FileItem[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+
+  useEffect(() => {
+    const q = searchQ.trim();
+    if (!q) { setSearchResults([]); setSearchOpen(false); return; }
+    setSearchLoading(true);
+    setSearchOpen(true);
+    const t = setTimeout(async () => {
+      try {
+        const url = new URL("/api/files/list", window.location.origin);
+        url.searchParams.set("folder", "all");
+        url.searchParams.set("q", q);
+        url.searchParams.set("limit", "12");
+        const res = await fetch(url.toString(), { cache: "no-store" });
+        if (!res.ok) { setSearchResults([]); return; }
+        const data = await res.json();
+        setSearchResults(Array.isArray(data.items) ? data.items : []);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [searchQ]);
+
   function openPreview(folder: Folder, item: FileItem) {
     if (canPreview(item.name)) {
       setPreview({ folder, item });
-      setViewerSize("large"); // reset to default each time we open
+      setViewerSize("large");
     } else {
-      // Non-previewable (e.g. .exe, .apk) -> trigger download
       const a = document.createElement("a");
-      a.href = item.url;
-      a.download = item.name;
-      a.click();
+      a.href = item.url; a.download = item.name; a.click();
     }
   }
   function closePreview() { setPreview(null); }
@@ -139,13 +155,12 @@ export default function HomePage() {
         setUser(parsed);
         setIsAdmin(!!parsed.isAdmin);
       }
-    } catch {
-      // ignore
-    }
-    // load all folders in parallel
+    } catch { /* ignore */ }
     FOLDERS.forEach(refreshFolder);
-    // load comments from DB
     refreshComments();
+    const onScroll = () => setScrolled(window.scrollY > 30);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -155,20 +170,18 @@ export default function HomePage() {
       if (!res.ok) return;
       const data = await res.json();
       if (Array.isArray(data)) setComments(data);
-    } catch {
-      // network error -> keep whatever we have on screen
-    }
+    } catch { /* ignore */ }
   }
 
   async function refreshFolder(folder: Folder) {
     try {
-      const res = await fetch(`/api/files/list?folder=${folder}`);
+      const res = await fetch(`/api/files/list?folder=${folder}&sort=date&order=desc&limit=${PREVIEW_LIMIT}`);
       if (!res.ok) return;
       const data = await res.json();
-      setFiles((prev) => ({ ...prev, [folder]: Array.isArray(data.items) ? data.items : [] }));
-    } catch {
-      // ignore network errors so the UI still renders
-    }
+      const items: FileItem[] = Array.isArray(data.items) ? data.items : [];
+      setFiles((prev) => ({ ...prev, [folder]: items }));
+      setCounts((prev) => ({ ...prev, [folder]: typeof data.total === "number" ? data.total : items.length }));
+    } catch { /* ignore */ }
   }
 
   async function handleDelete(folder: Folder, item: FileItem) {
@@ -178,8 +191,7 @@ export default function HomePage() {
       const res = await fetch(`/api/admin/upload?url=${encodeURIComponent(item.url)}`, { method: "DELETE" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.error || "Delete failed");
-        return;
+        alert(data.error || "Delete failed"); return;
       }
       await refreshFolder(folder);
     } catch (err) {
@@ -196,8 +208,7 @@ export default function HomePage() {
       const res = await fetch("/api/admin/upload", { method: "POST", body: fd });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.error || "Upload failed");
-        return;
+        alert(data.error || "Upload failed"); return;
       }
       await refreshFolder(folder);
     } finally {
@@ -261,7 +272,6 @@ export default function HomePage() {
     if (!user) return alert("Please log in to vote.");
     const current = votes[commentId] || null;
     const next: Vote = current === type ? null : type;
-    // Optimistic UI update
     setComments((prev) =>
       prev.map((c) => {
         if (c.id !== commentId) return c;
@@ -274,7 +284,6 @@ export default function HomePage() {
       })
     );
     setVotes((prev) => ({ ...prev, [commentId]: next }));
-    // Persist (only the "next" action; we don't currently undo on the server)
     if (next) {
       try {
         await fetch("/api/comments", {
@@ -282,9 +291,7 @@ export default function HomePage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ commentId, action: next }),
         });
-      } catch {
-        // leave optimistic state; user can retry
-      }
+      } catch { /* leave optimistic */ }
     }
   }
 
@@ -292,9 +299,7 @@ export default function HomePage() {
     if (!isAdmin) return;
     if (!confirm("Delete this comment and any replies?")) return;
     try {
-      const res = await fetch(`/api/comments?id=${encodeURIComponent(commentId)}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(`/api/comments?id=${encodeURIComponent(commentId)}`, { method: "DELETE" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         return alert(data.error || "Failed to delete");
@@ -307,7 +312,7 @@ export default function HomePage() {
 
   async function blockAuthor(c: Comment) {
     if (!isAdmin) return;
-    if (!confirm(`Block "${c.author}"?\nThey will no longer be able to log in, register, or post comments.`)) return;
+    if (!confirm(`Block "${c.author}"?`)) return;
     try {
       const res = await fetch("/api/admin/block", {
         method: "POST",
@@ -328,7 +333,6 @@ export default function HomePage() {
   const repliesByParent: Record<string, Comment[]> = {};
   comments.forEach((c) => { if (c.parentId) (repliesByParent[c.parentId] ||= []).push(c); });
 
-  // Reusable admin delete badge (absolute-positioned ✕)
   function DeleteBadge({ folder, item }: { folder: Folder; item: FileItem }) {
     if (!isAdmin) return null;
     return (
@@ -337,13 +341,10 @@ export default function HomePage() {
         onClick={(e) => { e.stopPropagation(); handleDelete(folder, item); }}
         title="Delete"
         aria-label="Delete file"
-      >
-        ✕
-      </button>
+      >✕</button>
     );
   }
 
-  // Reusable admin upload card
   function AdminUploadCard({ folder, accept }: { folder: Folder; accept?: string }) {
     if (!isAdmin) return null;
     const isUp = uploading === folder;
@@ -364,8 +365,24 @@ export default function HomePage() {
             e.target.value = "";
           }}
         />
-        <div style={{ fontSize: 32, lineHeight: 1 }}>{isUp ? "…" : "+"}</div>
-        <div style={{ marginTop: 6, fontWeight: 600 }}>{isUp ? "Uploading" : `Add ${folder.slice(0, -1)}`}</div>
+        <i className={`fas ${isUp ? "fa-spinner fa-spin" : "fa-cloud-arrow-up"}`} style={{ fontSize: 28, color: "#1976d2" }} />
+        <div style={{ marginTop: 8, fontWeight: 600, color: "#0d47a1" }}>{isUp ? "Uploading…" : `Add ${SECTION_LABEL[folder].slice(0, -1)}`}</div>
+      </div>
+    );
+  }
+
+  function SectionHeader({ folder }: { folder: Folder }) {
+    const total = counts[folder];
+    const more = total > files[folder].length;
+    return (
+      <div className="section-header">
+        <h2 className="section-title">
+          <i className={`fas ${SECTION_ICON[folder]}`} /> {SECTION_LABEL[folder]}
+          {total > 0 && <span className="section-count">{total}</span>}
+        </h2>
+        <Link href={`/category/${folder}`} className="section-view-all">
+          {more ? `View all ${total}` : "Open"} <i className="fas fa-arrow-right" />
+        </Link>
       </div>
     );
   }
@@ -380,21 +397,9 @@ export default function HomePage() {
         </div>
         <div className="comment-text">{c.text}</div>
         <div className="comment-actions">
-          <button
-            className={`vote-btn like ${myVote === "like" ? "active" : ""}`}
-            onClick={() => voteComment(c.id, "like")}
-            aria-pressed={myVote === "like"}
-            title="Like"
-          >👍 <span>{c.likes}</span></button>
-          <button
-            className={`vote-btn dislike ${myVote === "dislike" ? "active" : ""}`}
-            onClick={() => voteComment(c.id, "dislike")}
-            aria-pressed={myVote === "dislike"}
-            title="Dislike"
-          >👎 <span>{c.dislikes}</span></button>
-          {!isReply && (
-            <button className="reply-btn" onClick={() => setReplyOpen((p) => ({ ...p, [c.id]: !p[c.id] }))}>Reply</button>
-          )}
+          <button className={`vote-btn like ${myVote === "like" ? "active" : ""}`} onClick={() => voteComment(c.id, "like")} aria-pressed={myVote === "like"}>👍 <span>{c.likes}</span></button>
+          <button className={`vote-btn dislike ${myVote === "dislike" ? "active" : ""}`} onClick={() => voteComment(c.id, "dislike")} aria-pressed={myVote === "dislike"}>👎 <span>{c.dislikes}</span></button>
+          {!isReply && <button className="reply-btn" onClick={() => setReplyOpen((p) => ({ ...p, [c.id]: !p[c.id] }))}>Reply</button>}
           {isAdmin && (
             <>
               <button className="delete-btn" onClick={() => removeComment(c.id)}>Delete</button>
@@ -424,9 +429,7 @@ export default function HomePage() {
                 : `Show ${repliesByParent[c.id].length} repl${repliesByParent[c.id].length === 1 ? "y" : "ies"}`}
             </button>
             {showReplies[c.id] && (
-              <div className="replies">
-                {repliesByParent[c.id].map((r) => renderCommentRow(r, true))}
-              </div>
+              <div className="replies">{repliesByParent[c.id].map((r) => renderCommentRow(r, true))}</div>
             )}
           </div>
         )}
@@ -436,9 +439,9 @@ export default function HomePage() {
 
   return (
     <div className="ilmkhona0">
-      <header>
-        <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 20px", gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+      <header className={`site-header ${scrolled ? "is-scrolled" : ""}`}>
+        <div className="site-header-inner">
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <button
               aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
               aria-expanded={mobileMenuOpen}
@@ -447,23 +450,20 @@ export default function HomePage() {
             >
               {mobileMenuOpen ? "✕" : "☰"}
             </button>
-            <div className="site-title" style={{ fontWeight: 700, fontSize: 22 }}>ilmkhona0</div>
+            <div className="site-title">ilmkhona0</div>
             <nav className="top-nav">
-              <a href="#images">Images</a>
-              <a href="#videos">Videos</a>
-              <a href="#apps">Apps</a>
-              <a href="#games">Games</a>
+              {FOLDERS.map((f) => (
+                <Link key={f} href={`/category/${f}`}>{SECTION_LABEL[f]}</Link>
+              ))}
               <a href="#contact">Contact</a>
             </nav>
           </div>
-          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             {user ? (
               <>
                 <div className="username">{user.username || user.name || user.email}</div>
-                {isAdmin && (
-                  <Link href="/admin" style={{ background: "#111", color: "#fff", padding: "6px 10px", borderRadius: 6, textDecoration: "none" }}>Admin</Link>
-                )}
-                <button onClick={logout} style={{ background: "transparent", color: "#0a2342", border: "1px solid #0a2342", padding: "6px 10px", borderRadius: 6, fontWeight: 600 }}>Logout</button>
+                {isAdmin && <Link href="/admin" className="admin-pill">Admin</Link>}
+                <button onClick={logout} className="logout-pill">Logout</button>
               </>
             ) : (
               <Link href="/auth" className="login-register">Login / Register</Link>
@@ -472,121 +472,148 @@ export default function HomePage() {
         </div>
       </header>
 
-      <aside className={`sidebar ${mobileMenuOpen ? "open" : ""}`} style={{ left: mobileMenuOpen ? 0 : -250 }}>
-        <a href="#images" onClick={() => setMobileMenuOpen(false)}>Images</a>
-        <a href="#videos" onClick={() => setMobileMenuOpen(false)}>Videos</a>
-        <a href="#apps" onClick={() => setMobileMenuOpen(false)}>Apps</a>
-        <a href="#games" onClick={() => setMobileMenuOpen(false)}>Games</a>
-        <a href="#contact" onClick={() => setMobileMenuOpen(false)}>Contact</a>
+      <aside className={`sidebar ${mobileMenuOpen ? "open" : ""}`}>
+        {FOLDERS.map((f) => (
+          <Link key={f} href={`/category/${f}`} onClick={() => setMobileMenuOpen(false)}>
+            <i className={`fas ${SECTION_ICON[f]}`} /> {SECTION_LABEL[f]}
+          </Link>
+        ))}
+        <a href="#contact" onClick={() => setMobileMenuOpen(false)}>
+          <i className="fas fa-envelope" /> Contact
+        </a>
+        {isAdmin && (
+          <>
+            <div className="sidebar-divider" />
+            <Link href="/admin" onClick={() => setMobileMenuOpen(false)}>
+              <i className="fas fa-shield-halved" /> Admin
+            </Link>
+            <Link href="/admin/files" onClick={() => setMobileMenuOpen(false)}>
+              <i className="fas fa-folder-tree" /> Manage files
+            </Link>
+            <Link href="/admin/upload" onClick={() => setMobileMenuOpen(false)}>
+              <i className="fas fa-cloud-arrow-up" /> Upload
+            </Link>
+          </>
+        )}
       </aside>
 
-      <main style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 16px" }}>
-        {/* Images */}
-        <section id="images" style={sectionWrap}>
-          <h2 style={sectionTitle}>Images</h2>
-          <div className="row-scroll" style={rowScroll}>
-            <AdminUploadCard folder="images" accept="image/*" />
-            {files.images.length === 0 && !isAdmin && (
-              <div className="card" style={cardStyle}>
-                <MediaPlaceholder label="No images yet" />
-              </div>
+      {/* Hero */}
+      <section className="hero">
+        <div className="hero-bg" />
+        <div className="hero-inner">
+          <div className="hero-eyebrow">Welcome to</div>
+          <h1 className="hero-title">ilmkhona0</h1>
+          <p className="hero-sub">Images, videos, apps, games and files — curated and shared in one place.</p>
+
+          {/* Global search */}
+          <div className="hero-search">
+            <i className="fas fa-search" />
+            <input
+              type="search"
+              value={searchQ}
+              onChange={(e) => setSearchQ(e.target.value)}
+              onFocus={() => { if (searchQ.trim()) setSearchOpen(true); }}
+              onBlur={() => setTimeout(() => setSearchOpen(false), 180)}
+              placeholder="Search images, videos, apps, games, files..."
+            />
+            {searchQ && (
+              <button onClick={() => setSearchQ("")} className="hero-search-clear" aria-label="clear">✕</button>
             )}
-            {files.images.map((it) => (
-              <div key={it.url} className="card clickable" style={{ ...cardStyle, position: "relative" }} onClick={() => openPreview("images", it)}>
-                <DeleteBadge folder="images" item={it} />
-                {isImageName(it.name) ? (
-                  <img src={it.url} alt={it.name} style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 8 }} />
-                ) : (
-                  <MediaPlaceholder label="IMG" />
+            {searchOpen && (
+              <div className="hero-search-results">
+                {searchLoading && <div className="hero-search-status">Searching…</div>}
+                {!searchLoading && searchResults.length === 0 && searchQ.trim() && (
+                  <div className="hero-search-status">No matches for "{searchQ}".</div>
                 )}
-                <div style={{ marginTop: 8, fontWeight: 600, wordBreak: "break-all" }}>{it.name}</div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* Videos */}
-        <section id="videos" style={sectionWrap}>
-          <h2 style={sectionTitle}>Videos</h2>
-          <div className="row-scroll" style={rowScroll}>
-            <AdminUploadCard folder="videos" accept="video/*" />
-            {files.videos.length === 0 && !isAdmin && (
-              <div className="card" style={cardStyle}>
-                <MediaPlaceholder label="No videos yet" height={160} />
+                {!searchLoading && searchResults.map((it) => (
+                  <Link
+                    key={it.url}
+                    href={`/category/${it.folder || "files"}`}
+                    className="hero-search-result"
+                    onMouseDown={(e) => e.preventDefault()}
+                  >
+                    <i className={`fas ${SECTION_ICON[(it.folder as Folder) || "files"]}`} />
+                    <div>
+                      <div className="hero-search-result-name">{it.name}</div>
+                      <div className="hero-search-result-folder">{it.folder}</div>
+                    </div>
+                    <i className="fas fa-arrow-right hero-search-result-arrow" />
+                  </Link>
+                ))}
               </div>
             )}
-            {files.videos.map((it) => (
-              <div key={it.url} className="card clickable" style={{ ...cardStyle, minWidth: 280, position: "relative" }} onClick={() => openPreview("videos", it)}>
-                <DeleteBadge folder="videos" item={it} />
-                {isVideoName(it.name) ? (
-                  <video src={it.url} preload="metadata" style={{ width: "100%", height: 160, borderRadius: 8, background: "#000" }} />
-                ) : (
-                  <MediaPlaceholder label="VIDEO" height={160} />
-                )}
-                <div style={{ marginTop: 8, fontWeight: 600, wordBreak: "break-all" }}>{it.name}</div>
-              </div>
+          </div>
+
+          <div className="hero-stats">
+            {FOLDERS.map((f) => (
+              <Link key={f} href={`/category/${f}`} className="hero-stat">
+                <i className={`fas ${SECTION_ICON[f]}`} />
+                <div>
+                  <div className="hero-stat-num">{counts[f]}</div>
+                  <div className="hero-stat-label">{SECTION_LABEL[f]}</div>
+                </div>
+              </Link>
             ))}
           </div>
-        </section>
+        </div>
+      </section>
 
-        {/* Apps */}
-        <section id="apps" style={sectionWrap}>
-          <h2 style={sectionTitle}>Apps</h2>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <AdminUploadCard folder="apps" />
-            {files.apps.length === 0 && !isAdmin && (
-              <div className="card" style={{ ...cardStyle, minWidth: 140, textAlign: "center", color: "#666" }}>No apps yet</div>
-            )}
-            {files.apps.map((it) => (
-              <div key={it.url} className="card clickable" style={{ ...cardStyle, minWidth: 140, textAlign: "center", color: "#0a2342", position: "relative" }} onClick={() => openPreview("apps", it)}>
-                <DeleteBadge folder="apps" item={it} />
-                <div style={{ fontSize: 28 }}>📱</div>
-                <div style={{ fontWeight: 700, marginTop: 6, wordBreak: "break-all" }}>{it.name}</div>
-              </div>
-            ))}
+      <main className="home-main">
+        {FOLDERS.map((folder) => (
+          <section key={folder} id={folder} className="home-section">
+            <SectionHeader folder={folder} />
+            <div className="row-scroll">
+              <AdminUploadCard
+                folder={folder}
+                accept={
+                  folder === "images" ? "image/*"
+                  : folder === "videos" ? "video/*"
+                  : undefined
+                }
+              />
+              {files[folder].length === 0 && !isAdmin && (
+                <div className="card empty-card">No {SECTION_LABEL[folder].toLowerCase()} yet</div>
+              )}
+              {files[folder].map((it) => (
+                <div
+                  key={it.url}
+                  className="card preview-card"
+                  onClick={() => openPreview(folder, it)}
+                >
+                  <DeleteBadge folder={folder} item={it} />
+                  <div className="preview-card-media">
+                    {isImageName(it.name) ? (
+                      <img src={it.url} alt={it.name} loading="lazy" />
+                    ) : isVideoName(it.name) ? (
+                      <video src={it.url} preload="metadata" />
+                    ) : (
+                      <div className="preview-card-glyph">
+                        <i className={`fas ${
+                          isAudioName(it.name) ? "fa-music" :
+                          isPdfName(it.name) ? "fa-file-pdf" :
+                          isOfficeName(it.name) ? "fa-file-word" :
+                          isTextName(it.name) ? "fa-file-lines" :
+                          /\.(exe|msi|app|dmg)$/i.test(it.name) ? "fa-window-maximize" :
+                          /\.apk$/i.test(it.name) ? "fa-mobile-screen" :
+                          /\.(zip|rar|7z)$/i.test(it.name) ? "fa-file-zipper" :
+                          "fa-file"
+                        }`} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="preview-card-name">{it.name}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
+
+        {/* Contact */}
+        <section id="contact" className="home-section">
+          <div className="section-header">
+            <h2 className="section-title"><i className="fas fa-envelope" /> Contact</h2>
           </div>
-        </section>
-
-        {/* Games */}
-        <section id="games" style={sectionWrap}>
-          <h2 style={sectionTitle}>Games</h2>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <AdminUploadCard folder="games" />
-            {files.games.length === 0 && !isAdmin && (
-              <div className="card" style={{ ...cardStyle, minWidth: 140, color: "#666" }}>No games yet</div>
-            )}
-            {files.games.map((it) => (
-              <div key={it.url} className="card clickable" style={{ ...cardStyle, minWidth: 220, color: "#1976d2", display: "flex", alignItems: "center", gap: 10, position: "relative" }} onClick={() => openPreview("games", it)}>
-                <DeleteBadge folder="games" item={it} />
-                <span style={{ fontSize: 18 }}>⬇</span>
-                <strong style={{ wordBreak: "break-all" }}>{it.name}</strong>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* Files */}
-        <section id="files" style={sectionWrap}>
-          <h2 style={sectionTitle}>Files</h2>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <AdminUploadCard folder="files" />
-            {files.files.length === 0 && !isAdmin && (
-              <div className="card" style={{ ...cardStyle, minWidth: 140, color: "#666" }}>No files yet</div>
-            )}
-            {files.files.map((it) => (
-              <div key={it.url} className="card clickable" style={{ ...cardStyle, minWidth: 240, display: "flex", alignItems: "center", gap: 10, position: "relative" }} onClick={() => openPreview("files", it)}>
-                <DeleteBadge folder="files" item={it} />
-                <span style={{ fontSize: 18 }}>📄</span>
-                <strong style={{ wordBreak: "break-all", flex: 1 }}>{it.name}</strong>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* Contact Us */}
-        <section id="contact" style={sectionWrap}>
-          <h2 style={sectionTitle}>Contact Us</h2>
-          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "center" }}>
+          <div className="contact-row">
             <a href="https://github.com/ilmkhona0" target="_blank" rel="noreferrer" className="contact-link">
               <i className="fab fa-github" /> <span><strong>GitHub:</strong> ilmkhona0</span>
             </a>
@@ -623,9 +650,7 @@ export default function HomePage() {
               Only registered users can post comments. Please <Link href="/auth">register or log in</Link>.
             </div>
           )}
-          <div className="comments-list">
-            {topLevel.map((c) => renderCommentRow(c, false))}
-          </div>
+          <div className="comments-list">{topLevel.map((c) => renderCommentRow(c, false))}</div>
         </div>
       </div>
 
@@ -635,112 +660,43 @@ export default function HomePage() {
         </div>
       </footer>
 
-      {/* Lightbox / preview modal */}
+      {/* Lightbox preview */}
       {preview && (
         <div className="lightbox-backdrop" onClick={closePreview}>
-          <div
-            className={`lightbox-content size-${viewerSize}`}
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className={`lightbox-content size-${viewerSize}`} onClick={(e) => e.stopPropagation()}>
             <div className="lightbox-header">
               <span className="lightbox-title" title={preview.item.name}>{preview.item.name}</span>
               <div className="lightbox-toolbar">
-                {/* Resize controls */}
                 <div className="lightbox-size-group" role="group" aria-label="Window size">
-                  <button
-                    className={`lightbox-action lightbox-size ${viewerSize === "small" ? "is-active" : ""}`}
-                    onClick={() => setViewerSize("small")}
-                    title="Small"
-                    aria-label="Small window"
-                  >
-                    <i className="fas fa-compress" />
-                  </button>
-                  <button
-                    className={`lightbox-action lightbox-size ${viewerSize === "large" ? "is-active" : ""}`}
-                    onClick={() => setViewerSize("large")}
-                    title="Default"
-                    aria-label="Default window"
-                  >
-                    <i className="fas fa-window-maximize" />
-                  </button>
-                  <button
-                    className={`lightbox-action lightbox-size ${viewerSize === "full" ? "is-active" : ""}`}
-                    onClick={() => setViewerSize("full")}
-                    title="Full screen"
-                    aria-label="Full screen"
-                  >
-                    <i className="fas fa-expand" />
-                  </button>
+                  <button className={`lightbox-action lightbox-size ${viewerSize === "small" ? "is-active" : ""}`} onClick={() => setViewerSize("small")} title="Small"><i className="fas fa-compress" /></button>
+                  <button className={`lightbox-action lightbox-size ${viewerSize === "large" ? "is-active" : ""}`} onClick={() => setViewerSize("large")} title="Default"><i className="fas fa-window-maximize" /></button>
+                  <button className={`lightbox-action lightbox-size ${viewerSize === "full" ? "is-active" : ""}`} onClick={() => setViewerSize("full")} title="Full screen"><i className="fas fa-expand" /></button>
                 </div>
-
-                {/* Download */}
-                <a
-                  href={preview.item.url}
-                  download={preview.item.name}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="lightbox-action lightbox-download"
-                  title="Download"
-                >
+                <a href={preview.item.url} download={preview.item.name} target="_blank" rel="noreferrer" className="lightbox-action lightbox-download" title="Download">
                   <i className="fas fa-download" /> Download
                 </a>
-
-                {/* Admin-only delete (red trash) */}
                 {isAdmin && (
-                  <button
-                    onClick={deleteFromViewer}
-                    className="lightbox-action lightbox-delete"
-                    title="Delete file (admin)"
-                    aria-label="Delete file"
-                  >
+                  <button onClick={deleteFromViewer} className="lightbox-action lightbox-delete" title="Delete">
                     <i className="fas fa-trash" />
                   </button>
                 )}
-
-                {/* Close */}
                 <button onClick={closePreview} className="lightbox-action" title="Close">
                   <i className="fas fa-times" />
                 </button>
               </div>
             </div>
             <div className="lightbox-body">
-              {isImageName(preview.item.name) && (
-                <img
-                  src={preview.item.url}
-                  alt={preview.item.name}
-                  style={{ maxWidth: "100%", maxHeight: "100%", display: "block", margin: "0 auto" }}
-                />
-              )}
-              {isVideoName(preview.item.name) && (
-                <video
-                  src={preview.item.url}
-                  controls
-                  autoPlay
-                  style={{ width: "100%", maxHeight: "100%", background: "#000" }}
-                />
-              )}
-              {isAudioName(preview.item.name) && (
-                <audio src={preview.item.url} controls style={{ width: "100%" }} />
-              )}
-              {isPdfName(preview.item.name) && (
-                <iframe src={preview.item.url} style={{ width: "100%", height: "100%", border: "none" }} />
-              )}
-              {isTextName(preview.item.name) && (
-                <iframe
-                  src={preview.item.url}
-                  style={{ width: "100%", height: "100%", border: "none", background: "#fff" }}
-                />
-              )}
+              {isImageName(preview.item.name) && <img src={preview.item.url} alt={preview.item.name} style={{ maxWidth: "100%", maxHeight: "100%", display: "block", margin: "0 auto" }} />}
+              {isVideoName(preview.item.name) && <video src={preview.item.url} controls autoPlay style={{ width: "100%", maxHeight: "100%", background: "#000" }} />}
+              {isAudioName(preview.item.name) && <audio src={preview.item.url} controls style={{ width: "100%" }} />}
+              {isPdfName(preview.item.name) && <iframe src={preview.item.url} style={{ width: "100%", height: "100%", border: "none" }} />}
+              {isTextName(preview.item.name) && <iframe src={preview.item.url} style={{ width: "100%", height: "100%", border: "none", background: "#fff" }} />}
               {isOfficeName(preview.item.name) && (
                 /^https?:\/\//i.test(preview.item.url) ? (
-                  <iframe
-                    src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(preview.item.url)}`}
-                    style={{ width: "100%", height: "100%", border: "none" }}
-                  />
+                  <iframe src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(preview.item.url)}`} style={{ width: "100%", height: "100%", border: "none" }} />
                 ) : (
                   <div style={{ padding: 16, color: "#666" }}>
-                    Office documents can only be previewed when the file URL is publicly reachable
-                    (i.e. served from Vercel Blob in production). Use the Download button instead.
+                    Office documents can only be previewed when the file URL is publicly reachable.
                   </div>
                 )
               )}
@@ -751,31 +707,3 @@ export default function HomePage() {
     </div>
   );
 }
-
-const sectionWrap: React.CSSProperties = {
-  background: "#fff",
-  borderRadius: 16,
-  padding: "20px 24px",
-  marginBottom: 20,
-  boxShadow: "0 6px 24px rgba(33,150,243,0.08)",
-};
-
-const sectionTitle: React.CSSProperties = {
-  margin: "0 0 14px",
-  color: "#0d47a1",
-};
-
-const rowScroll: React.CSSProperties = {
-  display: "flex",
-  gap: 12,
-  overflowX: "auto",
-  padding: "8px 0",
-};
-
-const cardStyle: React.CSSProperties = {
-  background: "#fff",
-  border: "1px solid rgba(0,0,0,0.06)",
-  borderRadius: 10,
-  padding: 12,
-  minWidth: 220,
-};

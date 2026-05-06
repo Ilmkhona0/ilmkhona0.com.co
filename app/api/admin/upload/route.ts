@@ -42,31 +42,120 @@ export async function DELETE(req: NextRequest) {
 }
 
 /**
+ * PATCH /api/admin/upload
+ * Body: { url: <current url>, newName: <new file name>, folder: <folder> }
+ * Renames an uploaded file. On Blob this is implemented as copy-then-delete;
+ * on local fs it's a real rename.
+ */
+export async function PATCH(req: NextRequest) {
+  const body = (await req.json().catch(() => ({}))) as {
+    url?: string;
+    newName?: string;
+    folder?: string;
+  };
+  const url = body.url || "";
+  let newName = (body.newName || "").trim();
+  const folder = (body.folder || "").replace(/[^a-z0-9_-]/gi, "");
+
+  if (!url || !newName || !folder) {
+    return NextResponse.json({ error: "url, newName, and folder required" }, { status: 400 });
+  }
+
+  // sanitise filename: keep dots and hyphens, collapse spaces
+  newName = newName.replace(/[\\/]/g, "").replace(/\s+/g, " ").trim();
+  if (!newName) {
+    return NextResponse.json({ error: "invalid newName" }, { status: 400 });
+  }
+
+  try {
+    // --- Path A: Vercel Blob (copy + delete; Blob has no rename primitive) ---
+    if (process.env.BLOB_READ_WRITE_TOKEN && /^https?:\/\//i.test(url)) {
+      const { put, del } = await import("@vercel/blob");
+      const fetched = await fetch(url);
+      if (!fetched.ok) {
+        return NextResponse.json({ error: "could not fetch original blob" }, { status: 500 });
+      }
+      const buf = await fetched.arrayBuffer();
+      const newKey = `${folder}/${newName}`;
+
+      const isBinaryDistributable =
+        folder === "apps" ||
+        folder === "games" ||
+        /\.(exe|msi|apk|ipa|dmg|app|deb|rpm|appimage|jar|zip|7z|rar|tar|gz)$/i.test(newName);
+
+      const safeAscii = newName.replace(/[^\x20-\x7E]/g, "_");
+      const blob = await put(newKey, buf, {
+        access: "public",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        ...(isBinaryDistributable && {
+          contentDisposition: `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(newName)}`,
+        }),
+      });
+      await del(url);
+      return NextResponse.json({ success: true, url: blob.url, name: newName, storage: "blob" });
+    }
+
+    if (process.env.VERCEL) {
+      return NextResponse.json(
+        { error: "Cannot rename on Vercel without Blob storage configured." },
+        { status: 501 }
+      );
+    }
+
+    // --- Path B: local filesystem ---
+    const m = url.match(/\/uploads\/([^/]+)\/(.+)$/);
+    if (!m) return NextResponse.json({ error: "invalid local url" }, { status: 400 });
+    const [, oldFolder, oldName] = m;
+    const { rename } = await import("fs/promises");
+    const { join } = await import("path");
+    const fromPath = join(process.cwd(), "public", "uploads", oldFolder, oldName);
+    const toPath = join(process.cwd(), "public", "uploads", folder, newName);
+    await rename(fromPath, toPath);
+    return NextResponse.json({
+      success: true,
+      url: `/uploads/${folder}/${newName}`,
+      name: newName,
+      storage: "fs",
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+/**
  * File upload route.
  *
  * Strategy:
  * - If BLOB_READ_WRITE_TOKEN is set (production OR local with `vercel env pull`),
  *   we upload to Vercel Blob — works on Vercel's read-only filesystem.
  * - Otherwise (plain local dev), fall back to writing into /public/uploads/.
- *
- * Setup for production:
- *   1. Vercel dashboard -> ilmkhona0.com -> Storage tab -> Create -> Blob.
- *   2. `npm install @vercel/blob` in your project.
- *   3. (Optional, for local) `npx vercel link` then `npx vercel env pull .env.local`
- *      so BLOB_READ_WRITE_TOKEN appears locally too.
  */
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const folder = (formData.get("folder") as string) || "uploads";
+    const customName = ((formData.get("customName") as string) || "").trim();
 
     if (!file) {
       return NextResponse.json({ error: "No file" }, { status: 400 });
     }
 
+    // Decide final name (custom-rename keeps original extension if user omits it)
+    const origName = file.name;
+    let finalName = origName;
+    if (customName) {
+      const origExtMatch = /\.[a-z0-9]+$/i.exec(origName);
+      const ext = origExtMatch ? origExtMatch[0] : "";
+      finalName = /\.[a-z0-9]+$/i.test(customName) ? customName : customName + ext;
+      finalName = finalName.replace(/[\\/]/g, "").replace(/\s+/g, " ").trim();
+      if (!finalName) finalName = origName;
+    }
+
     // ---- Validate file type per folder ----
-    const lowerName = file.name.toLowerCase();
+    const lowerName = finalName.toLowerCase();
     const mime = file.type || "";
     const okForFolder: Record<string, boolean> = {
       images:
@@ -80,7 +169,7 @@ export async function POST(req: NextRequest) {
         mime === "application/octet-stream" ||
         mime === "application/vnd.android.package-archive",
       games:
-        /\.(exe|jar|apk|swf|love|nes|gb|gba|nds)$/i.test(lowerName) ||
+        /\.(exe|jar|apk|swf|love|nes|gb|gba|nds|zip)$/i.test(lowerName) ||
         mime === "application/octet-stream",
       files:
         // anything that's NOT an image or video belongs in /files
@@ -99,22 +188,37 @@ export async function POST(req: NextRequest) {
     if (process.env.BLOB_READ_WRITE_TOKEN) {
       const { put } = await import("@vercel/blob");
       const safeFolder = folder.replace(/[^a-z0-9_-]/gi, "");
-      const key = `${safeFolder}/${Date.now()}-${file.name}`;
+      const key = `${safeFolder}/${finalName}`;
+
+      // Force the browser to download (rather than try to render or navigate)
+      // for binary distributables. Images / videos / inline-previewable files
+      // remain inline so they can show in the lightbox.
+      const isBinaryDistributable =
+        safeFolder === "apps" ||
+        safeFolder === "games" ||
+        /\.(exe|msi|apk|ipa|dmg|app|deb|rpm|appimage|jar|zip|7z|rar|tar|gz)$/i.test(finalName);
+
+      // RFC 6266: quoted ASCII fallback + UTF-8 form for non-ASCII names.
+      const safeAscii = finalName.replace(/[^\x20-\x7E]/g, "_");
       const blob = await put(key, file, {
         access: "public",
         addRandomSuffix: false,
+        allowOverwrite: true,
+        ...(isBinaryDistributable && {
+          contentDisposition: `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(finalName)}`,
+        }),
       });
       return NextResponse.json({
         success: true,
         url: blob.url,
         pathname: blob.pathname,
+        name: finalName,
         storage: "blob",
       });
     }
 
     // --- Path B: local filesystem fallback (dev only) ---
     if (process.env.VERCEL) {
-      // Running on Vercel without a Blob token configured = no place to write.
       return NextResponse.json(
         {
           error:
@@ -132,12 +236,13 @@ export async function POST(req: NextRequest) {
 
     const dir = join(process.cwd(), "public", "uploads", folder);
     await mkdir(dir, { recursive: true });
-    const path = join(dir, file.name);
+    const path = join(dir, finalName);
     await writeFile(path, buffer);
 
     return NextResponse.json({
       success: true,
-      url: `/uploads/${folder}/${file.name}`,
+      url: `/uploads/${folder}/${finalName}`,
+      name: finalName,
       storage: "fs",
     });
   } catch (err) {
