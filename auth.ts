@@ -7,7 +7,7 @@
 // - JWT session strategy so the Credentials provider works with the DB adapter
 
 import NextAuth, { type DefaultSession } from "next-auth";
-import type { JWT } from "next-auth/jwt";
+import "next-auth/jwt";
 import Google from "next-auth/providers/google";
 import GitHub from "next-auth/providers/github";
 import Credentials from "next-auth/providers/credentials";
@@ -27,6 +27,13 @@ declare module "next-auth" {
   interface User {
     isAdmin?: boolean;
     username?: string | null;
+  }
+}
+declare module "next-auth/jwt" {
+  interface JWT {
+    isAdmin?: boolean;
+    username?: string | null;
+    uid?: string;
   }
 }
 // Admin shortcut (matches your existing /api/auth/login behavior).
@@ -161,9 +168,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
     async session({ session, token }) {
       if (session.user) {
-        session.user.id = token.uid as string | undefined;
+        if (token.uid) session.user.id = token.uid;
         session.user.isAdmin = !!token.isAdmin;
-        session.user.username = (token.username as string | null) ?? null;
+        session.user.username = token.username ?? null;
       }
       return session;
     },
