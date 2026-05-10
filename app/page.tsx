@@ -2,14 +2,9 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-
-type User = {
-  id?: string;
-  username?: string;
-  name?: string;
-  email?: string;
-  isAdmin?: boolean;
-};
+import { useSession, signOut } from "next-auth/react";
+import LoginMenu from "./components/LoginMenu";
+import ThemeToggle from "./components/ThemeToggle";
 
 type Comment = {
   id: string;
@@ -32,26 +27,18 @@ type FileItem = {
   folder?: string;
 };
 
+type ChatMsg = { role: "user" | "assistant"; content: string };
+
 const FOLDERS = ["images", "videos", "apps", "games", "files"] as const;
 type Folder = (typeof FOLDERS)[number];
 
-// Number of items shown on the homepage per section. The full list lives at /category/<folder>.
 const PREVIEW_LIMIT = 6;
 
 const SECTION_LABEL: Record<Folder, string> = {
-  images: "Images",
-  videos: "Videos",
-  apps: "Apps",
-  games: "Games",
-  files: "Files",
+  images: "Images", videos: "Videos", apps: "Apps", games: "Games", files: "Files",
 };
-
 const SECTION_ICON: Record<Folder, string> = {
-  images: "fa-images",
-  videos: "fa-video",
-  apps: "fa-mobile-screen",
-  games: "fa-gamepad",
-  files: "fa-folder-open",
+  images: "fa-images", videos: "fa-video", apps: "fa-mobile-screen", games: "fa-gamepad", files: "fa-folder-open",
 };
 
 function formatDate(iso: string): string {
@@ -77,8 +64,10 @@ function canPreview(n: string) {
 }
 
 export default function HomePage() {
-  const [user, setUser] = useState<User | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const { data: session } = useSession();
+  const user = session?.user;
+  const isAdmin = !!user?.isAdmin;
+
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
@@ -99,13 +88,21 @@ export default function HomePage() {
   const [replyOpen, setReplyOpen] = useState<Record<string, boolean>>({});
   const [replyText, setReplyText] = useState<Record<string, string>>({});
   const [showReplies, setShowReplies] = useState<Record<string, boolean>>({});
-  const [commentsOpen, setCommentsOpen] = useState(false);
+
+  // Single FAB -> two-tab panel
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"comments" | "ai">("comments");
+
+  // AI chat state
+  const [aiMessages, setAiMessages] = useState<ChatMsg[]>([]);
+  const [aiInput, setAiInput] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const aiScrollRef = useRef<HTMLDivElement | null>(null);
 
   type ViewerSize = "small" | "large" | "full";
   const [preview, setPreview] = useState<{ folder: Folder; item: FileItem } | null>(null);
   const [viewerSize, setViewerSize] = useState<ViewerSize>("large");
 
-  // Hero search
   const [searchQ, setSearchQ] = useState("");
   const [searchResults, setSearchResults] = useState<FileItem[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -150,14 +147,6 @@ export default function HomePage() {
   }
 
   useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem("ilm_user");
-      if (raw) {
-        const parsed: User = JSON.parse(raw);
-        setUser(parsed);
-        setIsAdmin(!!parsed.isAdmin);
-      }
-    } catch { /* ignore */ }
     FOLDERS.forEach(refreshFolder);
     refreshComments();
     const onScroll = () => setScrolled(window.scrollY > 30);
@@ -165,6 +154,26 @@ export default function HomePage() {
     return () => window.removeEventListener("scroll", onScroll);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Load saved AI chat history once the user is signed in.
+  useEffect(() => {
+    if (!user) { setAiMessages([]); return; }
+    (async () => {
+      try {
+        const res = await fetch("/api/ai/history", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Array.isArray(data.messages)) setAiMessages(data.messages);
+      } catch { /* ignore */ }
+    })();
+  }, [user]);
+
+  // Auto-scroll AI messages.
+  useEffect(() => {
+    if (activeTab === "ai" && aiScrollRef.current) {
+      aiScrollRef.current.scrollTop = aiScrollRef.current.scrollHeight;
+    }
+  }, [aiMessages, activeTab]);
 
   async function refreshComments() {
     try {
@@ -206,7 +215,6 @@ export default function HomePage() {
     setUploading(folder);
     const failures: string[] = [];
     try {
-      // Upload up to 4 in parallel
       const queue = Array.from(files);
       const concurrency = Math.min(4, queue.length);
       const workers: Promise<void>[] = [];
@@ -239,21 +247,21 @@ export default function HomePage() {
   }
 
   function logout() {
-    sessionStorage.removeItem("ilm_user");
-    setUser(null);
-    setIsAdmin(false);
+    signOut({ callbackUrl: "/" });
   }
+
+  const authorName = () =>
+    user?.username || user?.name || user?.email || "You";
 
   async function submitComment() {
     if (!user) return alert("Please log in to post a comment.");
     const text = commentText.trim();
     if (!text) return alert("Comment cannot be empty.");
-    const author = user.username || user.name || user.email || "You";
     try {
       const res = await fetch("/api/comments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, author, authorId: user.id, parentId: null }),
+        body: JSON.stringify({ text, author: authorName(), authorId: user.id, parentId: null }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -270,12 +278,11 @@ export default function HomePage() {
     if (!user) return alert("Please log in to reply.");
     const text = (replyText[parentId] || "").trim();
     if (!text) return;
-    const author = user.username || user.name || user.email || "You";
     try {
       const res = await fetch("/api/comments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, author, authorId: user.id, parentId }),
+        body: JSON.stringify({ text, author: authorName(), authorId: user.id, parentId }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -313,7 +320,7 @@ export default function HomePage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ commentId, action: next }),
         });
-      } catch { /* leave optimistic */ }
+      } catch { /* ignore */ }
     }
   }
 
@@ -349,6 +356,60 @@ export default function HomePage() {
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to block user");
     }
+  }
+
+  // ==== AI CHAT ====
+  async function persistAi(messages: ChatMsg[]) {
+    try {
+      await fetch("/api/ai/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages }),
+      });
+    } catch { /* best-effort */ }
+  }
+
+  async function sendAi() {
+    if (!user) {
+      alert("Please log in to chat with the AI.");
+      return;
+    }
+    const text = aiInput.trim();
+    if (!text || aiLoading) return;
+    const next: ChatMsg[] = [...aiMessages, { role: "user", content: text }];
+    setAiMessages(next);
+    setAiInput("");
+    setAiLoading(true);
+    try {
+      const res = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      let after: ChatMsg[];
+      if (!res.ok) {
+        after = [...next, { role: "assistant", content: `⚠️ ${data?.error || "AI request failed"}` }];
+      } else {
+        after = [...next, { role: "assistant", content: data.reply || "(empty response)" }];
+      }
+      setAiMessages(after);
+      persistAi(after);
+    } catch (err) {
+      const after: ChatMsg[] = [...next, { role: "assistant", content: `⚠️ ${err instanceof Error ? err.message : "Network error"}` }];
+      setAiMessages(after);
+      persistAi(after);
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  async function clearAi() {
+    if (!confirm("Start a new chat? This deletes the current conversation.")) return;
+    setAiMessages([]);
+    try {
+      await fetch("/api/ai/history", { method: "DELETE" });
+    } catch { /* ignore */ }
   }
 
   const topLevel = comments.filter((c) => !c.parentId);
@@ -482,14 +543,25 @@ export default function HomePage() {
             </nav>
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <ThemeToggle />
             {user ? (
               <>
-                <div className="username">{user.username || user.name || user.email}</div>
+                <div className="user-chip" title={user.email || user.name || ""}>
+                  {user.image ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={user.image} alt="" className="user-avatar" referrerPolicy="no-referrer" />
+                  ) : (
+                    <span className="user-avatar user-avatar-fallback" aria-hidden="true">
+                      {(user.username || user.name || user.email || "?")[0]?.toUpperCase()}
+                    </span>
+                  )}
+                  <span className="username">{user.username || user.name || user.email}</span>
+                </div>
                 {isAdmin && <Link href="/admin" className="admin-pill">Admin</Link>}
                 <button onClick={logout} className="logout-pill">Logout</button>
               </>
             ) : (
-              <Link href="/auth" className="login-register">Login / Register</Link>
+              <LoginMenu />
             )}
           </div>
         </div>
@@ -520,7 +592,6 @@ export default function HomePage() {
         )}
       </aside>
 
-      {/* Hero */}
       <section className="hero">
         <div className="hero-bg" />
         <div className="hero-inner">
@@ -528,7 +599,6 @@ export default function HomePage() {
           <h1 className="hero-title">ilmkhona0</h1>
           <p className="hero-sub">Images, videos, apps, games and files — curated and shared in one place.</p>
 
-          {/* Global search */}
           <div className="hero-search">
             <i className="fas fa-search" />
             <input
@@ -546,7 +616,7 @@ export default function HomePage() {
               <div className="hero-search-results">
                 {searchLoading && <div className="hero-search-status">Searching…</div>}
                 {!searchLoading && searchResults.length === 0 && searchQ.trim() && (
-                  <div className="hero-search-status">No matches for "{searchQ}".</div>
+                  <div className="hero-search-status">No matches for &quot;{searchQ}&quot;.</div>
                 )}
                 {!searchLoading && searchResults.map((it) => (
                   <Link
@@ -632,7 +702,6 @@ export default function HomePage() {
           </section>
         ))}
 
-        {/* Contact */}
         <section id="contact" className="home-section">
           <div className="section-header">
             <h2 className="section-title"><i className="fas fa-envelope" /> Contact</h2>
@@ -651,30 +720,112 @@ export default function HomePage() {
         </section>
       </main>
 
-      <button className="comments-fab" onClick={() => setCommentsOpen((p) => !p)} aria-label={commentsOpen ? "Close comments" : "Open comments"} title="Comments">
-        <i className={commentsOpen ? "fas fa-times" : "fas fa-comment"} />
+      {/* ===== Floating button + tabbed panel (Comments / AI Chat) ===== */}
+      <button
+        className="comments-fab"
+        onClick={() => setPanelOpen((p) => !p)}
+        aria-label={panelOpen ? "Close panel" : "Open Comments and AI"}
+        title="Comments & AI"
+      >
+        <i className={panelOpen ? "fas fa-times" : "fas fa-comments"} />
       </button>
 
-      <div className={`comments-panel ${commentsOpen ? "open" : ""}`}>
-        <div className="comments-panel-header">
-          <span style={{ fontWeight: 700 }}>Comments</span>
-          <button onClick={() => setCommentsOpen(false)} aria-label="Close" className="panel-close">✕</button>
+      <div className={`side-panel ${panelOpen ? "open" : ""}`}>
+        <div className="side-panel-tabs" role="tablist">
+          <button
+            role="tab"
+            aria-selected={activeTab === "comments"}
+            className={`side-tab ${activeTab === "comments" ? "is-active" : ""}`}
+            onClick={() => setActiveTab("comments")}
+          >
+            <i className="fas fa-comment" /> Comments
+          </button>
+          <button
+            role="tab"
+            aria-selected={activeTab === "ai"}
+            className={`side-tab ${activeTab === "ai" ? "is-active" : ""}`}
+            onClick={() => setActiveTab("ai")}
+          >
+            <i className="fas fa-robot" /> AI Chat
+          </button>
+          <button onClick={() => setPanelOpen(false)} aria-label="Close" className="panel-close">✕</button>
         </div>
-        <div className="comments-panel-body">
-          {user ? (
-            <div className="comment-form">
-              <label className="comment-form-label">Your Comment</label>
-              <textarea value={commentText} onChange={(e) => setCommentText(e.target.value)} placeholder="Write a comment..." />
-              <div style={{ marginTop: 8 }}>
-                <button onClick={submitComment} className="submit-btn">Submit</button>
+
+        <div className="side-panel-body">
+          {activeTab === "comments" && (
+            <>
+              {user ? (
+                <div className="comment-form">
+                  <label className="comment-form-label">Your Comment</label>
+                  <textarea value={commentText} onChange={(e) => setCommentText(e.target.value)} placeholder="Write a comment..." />
+                  <div style={{ marginTop: 8 }}>
+                    <button onClick={submitComment} className="submit-btn">Submit</button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ color: "#666", padding: 8 }}>
+                  Only registered users can post comments. Please <Link href="/auth">log in</Link>.
+                </div>
+              )}
+              <div className="comments-list">{topLevel.map((c) => renderCommentRow(c, false))}</div>
+            </>
+          )}
+
+          {activeTab === "ai" && (
+            <div className="ai-chat">
+              <div className="ai-chat-header">
+                <div>
+                  <strong>AI Instructor</strong>
+                </div>
+                {aiMessages.length > 0 && (
+                  <button className="ai-clear" onClick={clearAi} title="New chat (deletes current conversation)">
+                    <i className="fas fa-rotate-right" /> New chat
+                  </button>
+                )}
               </div>
-            </div>
-          ) : (
-            <div style={{ color: "#666", padding: 8 }}>
-              Only registered users can post comments. Please <Link href="/auth">register or log in</Link>.
+
+              <div className="ai-chat-scroll" ref={aiScrollRef}>
+                {!user && (
+                  <div className="ai-chat-empty">
+                    Please <Link href="/auth">log in</Link> to chat with the AI instructor.
+                  </div>
+                )}
+                {user && aiMessages.length === 0 && (
+                  <div className="ai-chat-empty">
+                    👋 Hi {user.username || user.name || "there"}! Ask me anything — programming, study help, this site, or general questions.
+                  </div>
+                )}
+                {aiMessages.map((m, i) => (
+                  <div key={i} className={`ai-msg ${m.role}`}>
+                    <div className="ai-msg-bubble">{m.content}</div>
+                  </div>
+                ))}
+                {aiLoading && (
+                  <div className="ai-msg assistant">
+                    <div className="ai-msg-bubble ai-typing">
+                      <span /> <span /> <span />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <form
+                className="ai-chat-form"
+                onSubmit={(e) => { e.preventDefault(); sendAi(); }}
+              >
+                <input
+                  type="text"
+                  value={aiInput}
+                  onChange={(e) => setAiInput(e.target.value)}
+                  placeholder={user ? "Ask the AI instructor..." : "Log in to chat"}
+                  disabled={!user || aiLoading}
+                />
+                <button type="submit" disabled={!user || aiLoading || !aiInput.trim()}>
+                  <i className="fas fa-paper-plane" />
+                </button>
+              </form>
             </div>
           )}
-          <div className="comments-list">{topLevel.map((c) => renderCommentRow(c, false))}</div>
         </div>
       </div>
 
@@ -684,7 +835,6 @@ export default function HomePage() {
         </div>
       </footer>
 
-      {/* Lightbox preview */}
       {preview && (
         <div className="lightbox-backdrop" onClick={closePreview}>
           <div className={`lightbox-content size-${viewerSize}`} onClick={(e) => e.stopPropagation()}>
