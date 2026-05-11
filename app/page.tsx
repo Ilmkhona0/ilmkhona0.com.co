@@ -460,13 +460,17 @@ export default function HomePage() {
     const more = total > files[folder].length;
     return (
       <div className="section-header">
-        <h2 className="section-title">
-          <i className={`fas ${SECTION_ICON[folder]}`} /> {SECTION_LABEL[folder]}
-          {total > 0 && <span className="section-count">{total}</span>}
-        </h2>
-        <Link href={`/category/${folder}`} className="section-view-all">
-          {more ? `View all ${total}` : "Open"} <i className="fas fa-arrow-right" />
+        <Link href={`/category/${folder}`} className="section-title-link" title={`Open ${SECTION_LABEL[folder]}`}>
+          <h2 className="section-title">
+            <i className={`fas ${SECTION_ICON[folder]}`} /> {SECTION_LABEL[folder]}
+            {total > 0 && <span className="section-count">{total}</span>}
+          </h2>
         </Link>
+        {more && (
+          <Link href={`/category/${folder}`} className="section-view-all">
+            View all {total} <i className="fas fa-arrow-right" />
+          </Link>
+        )}
       </div>
     );
   }

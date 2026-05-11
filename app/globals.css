@@ -1150,18 +1150,18 @@ body {
 }
 .ilmkhona0 .login-register {
   position: static !important;
-  background: linear-gradient(135deg, var(--brand-600), #8b5cf6) !important;
+  background: linear-gradient(135deg, #ff6b6b, #ee5a52) !important;
   color: #fff !important;
   padding: 9px 18px !important;
   border-radius: 999px !important;
   font-weight: 700 !important;
-  box-shadow: var(--shadow);
-  transition: transform .15s ease, box-shadow .15s ease;
+  box-shadow: 0 4px 14px rgba(238, 90, 82, 0.35);
+  transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
 }
 .ilmkhona0 .login-register:hover {
   transform: translateY(-1px);
-  box-shadow: var(--shadow-lg);
-  background: linear-gradient(135deg, var(--brand-700), #7c3aed) !important;
+  box-shadow: 0 8px 20px rgba(238, 90, 82, 0.45);
+  background: linear-gradient(135deg, #ff5252, #e53935) !important;
   color: #fff !important;
 }
 .ilmkhona0 .admin-pill,
@@ -1441,6 +1441,27 @@ body {
   align-items: center;
   margin-bottom: 16px;
 }
+.ilmkhona0 .section-title-link {
+  text-decoration: none !important;
+  color: inherit;
+  display: inline-block;
+  border-radius: 12px;
+  padding: 2px 6px;
+  margin: -2px -6px;
+  transition: background .15s ease, transform .12s ease;
+}
+.ilmkhona0 .section-title-link:hover {
+  background: var(--brand-50);
+  transform: translateX(2px);
+  text-decoration: none !important;
+}
+.ilmkhona0 .section-title-link:hover .section-title {
+  color: var(--brand-700);
+}
+.ilmkhona0 .section-title-link:hover .section-title i {
+  background: var(--brand-100);
+  transform: scale(1.05);
+}
 .ilmkhona0 .section-title {
   margin: 0;
   font-size: 22px;
@@ -1450,6 +1471,8 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 12px;
+  cursor: pointer;
+  transition: color .15s ease;
 }
 .ilmkhona0 .section-title i {
   font-size: 18px;
@@ -1459,6 +1482,7 @@ body {
   border-radius: 10px;
   width: 36px;
   text-align: center;
+  transition: background .15s ease, transform .15s ease;
 }
 .ilmkhona0 .section-count {
   display: inline-block;
@@ -1515,10 +1539,46 @@ body {
 .ilmkhona0 .preview-card-glyph {
   font-size: 44px;
   color: var(--brand-500);
-  background: linear-gradient(135deg, var(--brand-50), #ede9fe);
+  background: linear-gradient(135deg, #eff6ff, #dbeafe);
   width: 100%; height: 100%;
   display: flex; align-items: center; justify-content: center;
+  transition: transform .2s ease;
 }
+.ilmkhona0 .preview-card:hover .preview-card-glyph {
+  transform: scale(1.05);
+}
+
+/* Per-category placeholder colors (apps=green, games=purple, files=amber, images/videos=blue) */
+.ilmkhona0 #images .preview-card-glyph {
+  background: linear-gradient(135deg, #dbeafe, #bfdbfe);
+  color: #1d4ed8;
+}
+.ilmkhona0 #videos .preview-card-glyph {
+  background: linear-gradient(135deg, #cffafe, #a5f3fc);
+  color: #0e7490;
+}
+.ilmkhona0 #apps .preview-card-glyph {
+  background: linear-gradient(135deg, #d1fae5, #a7f3d0);
+  color: #047857;
+}
+.ilmkhona0 #games .preview-card-glyph {
+  background: linear-gradient(135deg, #ede9fe, #ddd6fe);
+  color: #6d28d9;
+}
+.ilmkhona0 #files .preview-card-glyph {
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  color: #b45309;
+}
+
+/* Match the section header icon tint to the category too */
+.ilmkhona0 #apps .section-title i  { color: #047857; background: #d1fae5; }
+.ilmkhona0 #games .section-title i { color: #6d28d9; background: #ede9fe; }
+.ilmkhona0 #files .section-title i { color: #b45309; background: #fef3c7; }
+.ilmkhona0 #videos .section-title i { color: #0e7490; background: #cffafe; }
+.ilmkhona0 #apps  .section-title-link:hover .section-title i { background: #a7f3d0; }
+.ilmkhona0 #games .section-title-link:hover .section-title i { background: #ddd6fe; }
+.ilmkhona0 #files .section-title-link:hover .section-title i { background: #fde68a; }
+.ilmkhona0 #videos .section-title-link:hover .section-title i { background: #a5f3fc; }
 .ilmkhona0 .preview-card-name {
   padding: 12px 14px;
   font-size: 14px;
