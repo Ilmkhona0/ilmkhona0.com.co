@@ -1,0 +1,6 @@
+# These folders are sibling apps (Electron desktop / Capacitor Android wrappers).
+# Vercel only deploys the Next.js website, so it should skip them entirely.
+desktop/
+android/
+*.apk
+*.exe

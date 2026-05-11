@@ -1,0 +1,73 @@
+{
+  "name": "ilmkhona0-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ilmkhona0 desktop wrapper (Electron) — loads https://ilmkhona0.com.co",
+  "author": "ilmkhona0 <ilmkhona@gmail.com>",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "icons": "node scripts/make-icons.js",
+    "prebuild": "npm run icons",
+    "prebuild:win": "npm run icons",
+    "prebuild:installer": "npm run icons",
+    "prebuild:portable": "npm run icons",
+    "pack": "electron-builder --dir",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:portable": "electron-builder --win portable",
+    "build:installer": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "png-to-ico": "^2.1.8",
+    "sharp": "^0.33.5"
+  },
+  "build": {
+    "appId": "com.ilmkhona0.desktop",
+    "productName": "ilmkhona0",
+    "copyright": "Copyright © 2026 ilmkhona0",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "build/icon.*",
+      "!**/*.md",
+      "!dist/**",
+      "!scripts/**"
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ilmkhona0"
+    },
+    "portable": {
+      "artifactName": "ilmkhona0-${version}-portable.exe"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "icon": "build/icon.png",
+      "category": "Network"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": "build/icon.png",
+      "category": "public.app-category.utilities"
+    }
+  }
+}

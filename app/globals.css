@@ -1100,7 +1100,13 @@ body {
     #f8fafc;
   font-family: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", Inter, Arial, sans-serif;
   color: var(--ink-900);
+  /* Stop any single overflowing element (a wide card row, the cookie banner,
+     etc.) from creating a page-level horizontal scrollbar. Internal
+     horizontal scrolling inside .row-scroll still works because that has its
+     own overflow:auto. */
+  overflow-x: hidden;
 }
+.ilmkhona0 { overflow-x: hidden; }
 
 /* ============== Sticky modern header ============== */
 .ilmkhona0 .site-header {
@@ -1118,13 +1124,22 @@ body {
   box-shadow: var(--shadow);
 }
 .ilmkhona0 .site-header-inner {
-  max-width: 1200px;
-  margin: 0 auto;
+  /* Header spans full viewport width with comfortable padding, so the Login
+     button sits on the right edge without being pinned all the way against it.
+     Phone layout is unaffected (it has its own override below). */
+  width: 100%;
+  max-width: 1600px;       /* cap on ultra-wide monitors so things don't sprawl */
+  margin: 0 auto;          /* keeps content centered on >1600px screens */
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  padding: 14px 20px;
+  padding: 14px 24px;
+  box-sizing: border-box;
+}
+@media (max-width: 720px) {
+  /* Keep phone padding tight so the Login pill doesn't cramp. */
+  .ilmkhona0 .site-header-inner { padding: 12px 14px; }
 }
 .ilmkhona0 .site-title {
   font-weight: 800;

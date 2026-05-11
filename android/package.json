@@ -1,0 +1,24 @@
+{
+  "name": "ilmkhona0-android",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ilmkhona0 Android wrapper (Capacitor) — loads https://ilmkhona0.com.co",
+  "author": "ilmkhona0 <ilmkhona@gmail.com>",
+  "scripts": {
+    "init": "cap sync",
+    "add:android": "cap add android",
+    "sync": "cap sync android",
+    "open:android": "cap open android",
+    "run:android": "cap run android",
+    "build:apk": "cap sync android && cd android && ./gradlew assembleRelease",
+    "build:apk:debug": "cap sync android && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/app": "^6.0.2",
+    "@capacitor/core": "^6.2.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0"
+  }
+}

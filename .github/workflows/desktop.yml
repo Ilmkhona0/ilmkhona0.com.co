@@ -1,0 +1,62 @@
+name: Build Desktop (.exe)
+
+on:
+  # Manual trigger from the Actions tab.
+  workflow_dispatch:
+  # Auto-build whenever the desktop wrapper changes.
+  push:
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop.yml"
+
+jobs:
+  build:
+    name: Build Windows installer + portable .exe
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install dependencies
+        # Use `npm install` (not ci) because we don't commit a package-lock.json yet.
+        # Once a lock file exists, switch to `npm ci`.
+        run: npm install
+
+      - name: Build Windows .exe (installer + portable)
+        env:
+          # electron-builder needs this when running in CI.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run build:win
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ilmkhona0-windows-installer
+          path: desktop/dist/*Setup*.exe
+          if-no-files-found: warn
+
+      - name: Upload portable
+        uses: actions/upload-artifact@v4
+        with:
+          name: ilmkhona0-windows-portable
+          path: desktop/dist/*portable*.exe
+          if-no-files-found: warn
+
+      - name: Upload all build outputs (debug)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ilmkhona0-windows-all
+          path: desktop/dist/
+          if-no-files-found: warn
