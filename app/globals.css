@@ -2614,6 +2614,11 @@ footer {
 .auth-form { display: flex; flex-direction: column; gap: 6px; }
 .auth-form label { font-size: 0.85rem; color: #444; margin-top: 6px; }
 .auth-form input {
+  /* Inputs were overflowing the login dropdown because content-box sizing
+     adds padding/border on top of width. border-box keeps them inside. */
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   padding: 11px 12px;
   border: 1px solid #d8d8d8;
   border-radius: 10px;

@@ -720,6 +720,9 @@ export default function HomePage() {
             <a href="https://wa.me/" target="_blank" rel="noreferrer" className="contact-link">
               <i className="fab fa-whatsapp" /> <span><strong>WhatsApp:</strong> ilmkhona0</span>
             </a>
+            <a href="https://www.linkedin.com/in/ilmkhona/" target="_blank" rel="noreferrer" className="contact-link">
+              <i className="fab fa-linkedin" /> <span><strong>LinkedIn:</strong> ilmkhona</span>
+            </a>
           </div>
         </section>
       </main>
