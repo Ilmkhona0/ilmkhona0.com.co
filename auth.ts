@@ -40,22 +40,45 @@ declare module "next-auth/jwt" {
 const ADMIN_USERNAMES = new Set(["ilmkhona0", "ilmkhona@gmail.com"]);
 const ADMIN_PASSWORD = "MySecret123";
 
+// Helper: only enable an OAuth provider if both its client ID and secret are
+// actually present in the environment. Empty/missing values make NextAuth v5
+// throw a generic "Configuration" 500 from /api/auth/session, which silently
+// kills login even for email+password. Conditional loading prevents that.
+function hasEnv(...keys: string[]) {
+  return keys.every((k) => {
+    const v = process.env[k];
+    return typeof v === "string" && v.trim().length > 0;
+  });
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const oauthProviders: any[] = [];
+if (hasEnv("AUTH_GOOGLE_ID", "AUTH_GOOGLE_SECRET")) {
+  oauthProviders.push(
+    Google({
+      clientId: process.env.AUTH_GOOGLE_ID!,
+      clientSecret: process.env.AUTH_GOOGLE_SECRET!,
+      allowDangerousEmailAccountLinking: true,
+    })
+  );
+}
+if (hasEnv("AUTH_GITHUB_ID", "AUTH_GITHUB_SECRET")) {
+  oauthProviders.push(
+    GitHub({
+      clientId: process.env.AUTH_GITHUB_ID!,
+      clientSecret: process.env.AUTH_GITHUB_SECRET!,
+      allowDangerousEmailAccountLinking: true,
+    })
+  );
+}
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: MongoDBAdapter(clientPromise),
   session: { strategy: "jwt" },
   trustHost: true,
   pages: { signIn: "/auth" },
   providers: [
-    Google({
-      clientId: process.env.AUTH_GOOGLE_ID,
-      clientSecret: process.env.AUTH_GOOGLE_SECRET,
-      allowDangerousEmailAccountLinking: true,
-    }),
-    GitHub({
-      clientId: process.env.AUTH_GITHUB_ID,
-      clientSecret: process.env.AUTH_GITHUB_SECRET,
-      allowDangerousEmailAccountLinking: true,
-    }),
+    ...oauthProviders,
     Credentials({
       name: "Email",
       credentials: {
