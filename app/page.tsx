@@ -27,7 +27,18 @@ type FileItem = {
   folder?: string;
 };
 
-type ChatMsg = { role: "user" | "assistant"; content: string };
+// Chat messages can be either plain text (Groq) or an image (Cloudflare Workers AI).
+// For images, `content` is a data: URL the browser can render directly.
+type ChatMsg = {
+  role: "user" | "assistant";
+  content: string;
+  kind?: "text" | "image";
+};
+type AiMode = "text" | "image";
+type GenKind = "image" | "gif" | "video" | "shorts" | "audio";
+type PanelSize = "sm" | "md" | "lg" | "xl";
+
+// (Web Speech API types removed — we now use MediaRecorder + Groq Whisper.)
 
 const FOLDERS = ["images", "videos", "apps", "games", "files"] as const;
 type Folder = (typeof FOLDERS)[number];
@@ -93,11 +104,117 @@ export default function HomePage() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"comments" | "ai">("comments");
 
+  // Resizable panel — "sm" is the original 380×560 size; +/- grow/shrink within
+  // sm → md → lg → xl. Default to the original on first visit.
+  const [panelSize, setPanelSize] = useState<PanelSize>("sm");
+  useEffect(() => {
+    const saved = (typeof window !== "undefined" && localStorage.getItem("panelSize")) as
+      PanelSize | null;
+    if (saved === "sm" || saved === "md" || saved === "lg" || saved === "xl") setPanelSize(saved);
+  }, []);
+  function changePanelSize(delta: 1 | -1) {
+    const order: PanelSize[] = ["sm", "md", "lg", "xl"];
+    const idx = order.indexOf(panelSize);
+    const next = order[Math.max(0, Math.min(order.length - 1, idx + delta))];
+    setPanelSize(next);
+    try { localStorage.setItem("panelSize", next); } catch { /* ignore */ }
+  }
+
   // AI chat state
   const [aiMessages, setAiMessages] = useState<ChatMsg[]>([]);
   const [aiInput, setAiInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  // What kind of generation the user just requested; the NEXT user message
+  // becomes the prompt for that generation. null = regular text chat.
+  const [pendingGen, setPendingGen] = useState<GenKind | null>(null);
+  // Voice features
+  const [voiceListening, setVoiceListening] = useState(false);
+  const [speakingIdx, setSpeakingIdx] = useState<number | null>(null);
   const aiScrollRef = useRef<HTMLDivElement | null>(null);
+  const aiInputRef = useRef<HTMLInputElement | null>(null);
+  const aiFileInputRef = useRef<HTMLInputElement | null>(null);
+  // Voice recording state — MediaRecorder + audio stream so we can stop cleanly.
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const [voiceTranscribing, setVoiceTranscribing] = useState(false);
+
+  // File uploads queued for the next AI message. Each item is shown above the
+  // input as a removable chip. When the user sends, they go to the AI for
+  // analysis (Gemini for images, parsers for docs — wired up next step).
+  type UploadedFile = {
+    name: string;
+    size: number;
+    type: string;
+    dataUrl: string; // base64 data URL so we can preview / send
+  };
+  const [aiAttachments, setAiAttachments] = useState<UploadedFile[]>([]);
+
+  async function handleFilePicked(fl: FileList | null) {
+    if (!fl || !fl.length) return;
+    const MAX_BYTES = 20 * 1024 * 1024; // 20 MB per file — keep request size reasonable
+    const accepted: UploadedFile[] = [];
+    for (const f of Array.from(fl)) {
+      if (f.size > MAX_BYTES) {
+        alert(`"${f.name}" is too big (max 20 MB).`);
+        continue;
+      }
+      const dataUrl: string = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(typeof r.result === "string" ? r.result : "");
+        r.onerror = () => reject(r.error);
+        r.readAsDataURL(f);
+      });
+      accepted.push({ name: f.name, size: f.size, type: f.type || "application/octet-stream", dataUrl });
+    }
+    setAiAttachments((prev) => [...prev, ...accepted]);
+  }
+
+  function removeAttachment(idx: number) {
+    setAiAttachments((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function humanFileSize(bytes: number) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+
+  function fileIconClass(type: string, name: string) {
+    if (type.startsWith("image/")) return "fa-file-image";
+    if (type.startsWith("video/")) return "fa-file-video";
+    if (type.startsWith("audio/")) return "fa-file-audio";
+    if (type === "application/pdf" || /\.pdf$/i.test(name)) return "fa-file-pdf";
+    if (/word|\.docx?$/i.test(type + " " + name)) return "fa-file-word";
+    if (/excel|sheet|\.xlsx?$|\.csv$/i.test(type + " " + name)) return "fa-file-excel";
+    if (/presentation|\.pptx?$/i.test(type + " " + name)) return "fa-file-powerpoint";
+    if (/^text\//.test(type) || /\.(txt|md|json|js|ts|tsx|jsx|html|css)$/i.test(name)) return "fa-file-lines";
+    return "fa-file";
+  }
+
+  // Click "/generate image" etc. → the AI asks what to generate, and the
+  // user's next message becomes the generation prompt.
+  const KIND_LABEL: Record<GenKind, string> = {
+    image: "image",
+    gif: "GIF",
+    video: "video",
+    shorts: "short video",
+    audio: "audio clip",
+  };
+  function startGenerate(kind: GenKind) {
+    if (!user) { alert("Please log in to use AI tools."); return; }
+    setPendingGen(kind);
+    setAiMessages((prev) => [...prev, {
+      role: "assistant",
+      kind: "text",
+      content: `What ${KIND_LABEL[kind]} should I generate? Describe it in one sentence — e.g. "${
+        kind === "image" || kind === "gif" ? "a peaceful mountain village at sunset" :
+        kind === "video" || kind === "shorts" ? "a 5-second clip of waves crashing on a beach" :
+        "calm rain sounds with distant thunder"
+      }".`,
+    }]);
+    setTimeout(() => aiInputRef.current?.focus(), 0);
+  }
 
   type ViewerSize = "small" | "large" | "full";
   const [preview, setPreview] = useState<{ folder: Folder; item: FileItem } | null>(null);
@@ -375,33 +492,240 @@ export default function HomePage() {
       return;
     }
     const text = aiInput.trim();
-    if (!text || aiLoading) return;
-    const next: ChatMsg[] = [...aiMessages, { role: "user", content: text }];
+    // Allow sending with just attachments (no text) so users can drop a file
+    // and ask "what is this?" by attaching alone.
+    if ((!text && aiAttachments.length === 0) || aiLoading) return;
+
+    // Show each attachment as its own message above the text.
+    const attachmentMsgs: ChatMsg[] = aiAttachments.map((f) => ({
+      role: "user",
+      kind: f.type.startsWith("image/") ? "image" : "text",
+      content: f.type.startsWith("image/")
+        ? f.dataUrl
+        : `📎 Uploaded file: ${f.name} (${humanFileSize(f.size)})`,
+    }));
+    const userMsg: ChatMsg | null = text
+      ? { role: "user", content: text, kind: "text" }
+      : null;
+    const next: ChatMsg[] = [
+      ...aiMessages,
+      ...attachmentMsgs,
+      ...(userMsg ? [userMsg] : []),
+    ];
     setAiMessages(next);
     setAiInput("");
+    // Clear queued attachments — they've now been added to the conversation.
+    const hadAttachments = aiAttachments.length > 0;
+    setAiAttachments([]);
     setAiLoading(true);
+    // Remember the pending generation kind for this turn, then clear it so the
+    // next user message goes back to regular chat.
+    const gen = pendingGen;
+    setPendingGen(null);
     try {
-      const res = await fetch("/api/ai/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next }),
-      });
-      const data = await res.json().catch(() => ({}));
       let after: ChatMsg[];
-      if (!res.ok) {
-        after = [...next, { role: "assistant", content: `⚠️ ${data?.error || "AI request failed"}` }];
+
+      if (gen === "image") {
+        // ---- Cloudflare Workers AI image generation ----
+        const res = await fetch("/api/ai/image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: text }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.url) {
+          after = [...next, {
+            role: "assistant",
+            content: `⚠️ ${data?.error || "Image generation failed"}`,
+            kind: "text",
+          }];
+        } else {
+          after = [...next, {
+            role: "assistant",
+            content: data.url,
+            kind: "image",
+          }];
+        }
+      } else if (gen) {
+        // GIF, video, shorts, audio — not yet wired up. Helpful "coming soon".
+        const label = KIND_LABEL[gen];
+        after = [...next, {
+          role: "assistant",
+          content:
+            `🚧 ${label} generation isn't live yet — your prompt "${text}" has been noted. ` +
+            `I'll wire this up next (likely via fal.ai for video/GIF and ElevenLabs for audio). ` +
+            `For now, try /generate image — that one is fully working via Cloudflare Workers AI.`,
+          kind: "text",
+        }];
+      } else if (hadAttachments) {
+        // File analysis isn't wired up to a vision/parser API yet. Acknowledge
+        // the upload inline so the UX feels complete; the next sequence step
+        // is wiring this to Gemini (images) + pdf-parse/mammoth (docs).
+        after = [...next, {
+          role: "assistant",
+          content:
+            `📎 Got your file${aiAttachments.length > 1 ? "s" : ""}. ` +
+            `Full content analysis is coming next — I'll wire it up to Gemini Vision (images) and local parsers (PDF/Word/Excel) ` +
+            `in the next step. For now you can chat normally; the file stays in the conversation.`,
+          kind: "text",
+        }];
       } else {
-        after = [...next, { role: "assistant", content: data.reply || "(empty response)" }];
+        // ---- Regular Groq text chat ----
+        const textHistory = next.filter((m) => (m.kind ?? "text") === "text");
+        const res = await fetch("/api/ai/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: textHistory }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          after = [...next, {
+            role: "assistant",
+            content: `⚠️ ${data?.error || "AI request failed"}`,
+            kind: "text",
+          }];
+        } else {
+          after = [...next, {
+            role: "assistant",
+            content: data.reply || "(empty response)",
+            kind: "text",
+          }];
+        }
       }
       setAiMessages(after);
       persistAi(after);
     } catch (err) {
-      const after: ChatMsg[] = [...next, { role: "assistant", content: `⚠️ ${err instanceof Error ? err.message : "Network error"}` }];
+      const after: ChatMsg[] = [...next, {
+        role: "assistant",
+        content: `⚠️ ${err instanceof Error ? err.message : "Network error"}`,
+        kind: "text",
+      }];
       setAiMessages(after);
       persistAi(after);
     } finally {
       setAiLoading(false);
     }
+  }
+
+  // ============ VOICE: text-to-speech (read aloud) ============
+  function speakMessage(text: string, idx: number) {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      alert("Your browser does not support speech synthesis.");
+      return;
+    }
+    // If clicking the same message that's already speaking → stop it.
+    if (speakingIdx === idx) {
+      window.speechSynthesis.cancel();
+      setSpeakingIdx(null);
+      return;
+    }
+    window.speechSynthesis.cancel(); // stop any previous utterance
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.0;
+    u.pitch = 1.0;
+    u.onend = () => setSpeakingIdx((curr) => (curr === idx ? null : curr));
+    u.onerror = () => setSpeakingIdx((curr) => (curr === idx ? null : curr));
+    setSpeakingIdx(idx);
+    window.speechSynthesis.speak(u);
+  }
+
+  // ============ VOICE: record audio → send to Groq Whisper ============
+  // Why this approach: MediaRecorder works in every modern browser, requests
+  // a clear mic permission prompt, and Groq Whisper is far more accurate than
+  // the browser's built-in Web Speech API (which is Chromium-only and flaky).
+  function stopMediaTracks() {
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      mediaStreamRef.current = null;
+    }
+  }
+
+  async function toggleVoiceInput() {
+    if (typeof window === "undefined") return;
+
+    // Stop recording → send to Whisper.
+    if (voiceListening && mediaRecorderRef.current) {
+      const rec = mediaRecorderRef.current;
+      try { rec.stop(); } catch { /* ignore */ }
+      return;
+    }
+
+    // Start recording.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      alert("Your browser doesn't support audio recording. Try Chrome, Edge, Firefox, or Safari.");
+      return;
+    }
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/denied|NotAllowed/i.test(msg)) {
+        alert(
+          "Microphone permission denied. Click the lock icon in the address bar → Site settings → Microphone → Allow, then try again."
+        );
+      } else {
+        alert(`Could not access microphone: ${msg}`);
+      }
+      return;
+    }
+    mediaStreamRef.current = stream;
+    audioChunksRef.current = [];
+
+    // Pick a mime type the browser actually supports for recording. Whisper
+    // accepts webm/ogg/mp3/m4a/wav etc., so any of these is fine.
+    const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg", "audio/mp4"];
+    let mime = "";
+    for (const m of candidates) {
+      if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m)) { mime = m; break; }
+    }
+    let rec: MediaRecorder;
+    try {
+      rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+    } catch (err) {
+      stopMediaTracks();
+      alert("Could not start recording: " + (err instanceof Error ? err.message : "unknown error"));
+      return;
+    }
+    mediaRecorderRef.current = rec;
+
+    rec.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+    };
+    rec.onstop = async () => {
+      setVoiceListening(false);
+      stopMediaTracks();
+      const blob = new Blob(audioChunksRef.current, { type: mime || "audio/webm" });
+      audioChunksRef.current = [];
+      mediaRecorderRef.current = null;
+      if (blob.size < 1000) {
+        // Probably an accidental tap — don't bother the API.
+        return;
+      }
+      // Send to Groq Whisper.
+      setVoiceTranscribing(true);
+      try {
+        const fd = new FormData();
+        fd.append("audio", blob, "recording.webm");
+        const r = await fetch("/api/ai/transcribe", { method: "POST", body: fd });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          alert(`Transcription failed: ${data?.error || `HTTP ${r.status}`}`);
+        } else if (data?.text) {
+          // Append to existing input rather than overwriting, so users can
+          // dictate in chunks.
+          setAiInput((prev) => (prev ? (prev + " " + data.text).trim() : data.text));
+          setTimeout(() => aiInputRef.current?.focus(), 0);
+        }
+      } catch (err) {
+        alert("Transcription network error: " + (err instanceof Error ? err.message : ""));
+      } finally {
+        setVoiceTranscribing(false);
+      }
+    };
+
+    setVoiceListening(true);
+    rec.start();
   }
 
   async function clearAi() {
@@ -571,7 +895,14 @@ export default function HomePage() {
         </div>
       </header>
 
+      <div
+        className={`sidebar-backdrop ${mobileMenuOpen ? "is-visible" : ""}`}
+        onClick={() => setMobileMenuOpen(false)}
+        aria-hidden="true"
+      />
+
       <aside className={`sidebar ${mobileMenuOpen ? "open" : ""}`}>
+        <div className="sidebar-section-label">Browse</div>
         {FOLDERS.map((f) => (
           <Link key={f} href={`/category/${f}`} onClick={() => setMobileMenuOpen(false)}>
             <i className={`fas ${SECTION_ICON[f]}`} /> {SECTION_LABEL[f]}
@@ -583,6 +914,7 @@ export default function HomePage() {
         {isAdmin && (
           <>
             <div className="sidebar-divider" />
+            <div className="sidebar-section-label">Admin</div>
             <Link href="/admin" onClick={() => setMobileMenuOpen(false)}>
               <i className="fas fa-shield-halved" /> Admin
             </Link>
@@ -737,7 +1069,7 @@ export default function HomePage() {
         <i className={panelOpen ? "fas fa-times" : "fas fa-comments"} />
       </button>
 
-      <div className={`side-panel ${panelOpen ? "open" : ""}`}>
+      <div className={`side-panel size-${panelSize} ${panelOpen ? "open" : ""}`}>
         <div className="side-panel-tabs" role="tablist">
           <button
             role="tab"
@@ -755,6 +1087,28 @@ export default function HomePage() {
           >
             <i className="fas fa-robot" /> AI Chat
           </button>
+          <div className="side-panel-size-controls" aria-label="Resize panel">
+            <button
+              type="button"
+              className="panel-size-btn"
+              onClick={() => changePanelSize(-1)}
+              disabled={panelSize === "sm"}
+              title="Smaller"
+              aria-label="Smaller panel"
+            >
+              <i className="fas fa-minus" />
+            </button>
+            <button
+              type="button"
+              className="panel-size-btn"
+              onClick={() => changePanelSize(1)}
+              disabled={panelSize === "lg"}
+              title="Larger"
+              aria-label="Larger panel"
+            >
+              <i className="fas fa-plus" />
+            </button>
+          </div>
           <button onClick={() => setPanelOpen(false)} aria-label="Close" className="panel-close">✕</button>
         </div>
 
@@ -791,6 +1145,66 @@ export default function HomePage() {
                 )}
               </div>
 
+              {user && (
+                <div className="ai-quick-actions" aria-label="Quick AI commands">
+                  {/* Line 1: image */}
+                  <button
+                    type="button"
+                    className="ai-quick-row"
+                    onClick={() => startGenerate("image")}
+                    disabled={aiLoading}
+                  >
+                    <span className="ai-quick-cmd">/generate image</span>
+                    <span className="ai-quick-hint">Picture from a description</span>
+                  </button>
+
+                  {/* Line 2: video / gif / shorts grouped — each a separate click */}
+                  <div className="ai-quick-row ai-quick-row-group">
+                    <span className="ai-quick-cmd">/generate</span>
+                    {(["video", "gif", "shorts"] as GenKind[]).map((k, i) => (
+                      <span key={k} style={{ display: "contents" }}>
+                        {i > 0 && <span className="ai-quick-sep">·</span>}
+                        <button
+                          type="button"
+                          className="ai-quick-chip"
+                          onClick={() => startGenerate(k)}
+                          disabled={aiLoading}
+                        >
+                          {k}
+                        </button>
+                      </span>
+                    ))}
+                    <span className="ai-quick-hint">Short moving visual (coming soon)</span>
+                  </div>
+
+                  {/* Line 3: audio */}
+                  <button
+                    type="button"
+                    className="ai-quick-row"
+                    onClick={() => startGenerate("audio")}
+                    disabled={aiLoading}
+                  >
+                    <span className="ai-quick-cmd">/generate audio</span>
+                    <span className="ai-quick-hint">Voice or music clip (coming soon)</span>
+                  </button>
+                </div>
+              )}
+
+              {pendingGen && (
+                <div className="ai-mode-banner">
+                  <span><i className="fas fa-wand-magic-sparkles" /> Generating: {KIND_LABEL[pendingGen]}</span>
+                  <button
+                    type="button"
+                    className="ai-mode-banner-cancel"
+                    onClick={() => setPendingGen(null)}
+                    aria-label="Cancel"
+                    title="Cancel — go back to chat"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+
               <div className="ai-chat-scroll" ref={aiScrollRef}>
                 {!user && (
                   <div className="ai-chat-empty">
@@ -804,7 +1218,34 @@ export default function HomePage() {
                 )}
                 {aiMessages.map((m, i) => (
                   <div key={i} className={`ai-msg ${m.role}`}>
-                    <div className="ai-msg-bubble">{m.content}</div>
+                    {m.kind === "image" ? (
+                      <div className="ai-msg-bubble ai-msg-image">
+                        <img src={m.content} alt="Generated image" />
+                        <a
+                          href={m.content}
+                          download={`ilmkhona0-${Date.now()}.png`}
+                          className="ai-image-download"
+                          title="Download image"
+                        >
+                          <i className="fas fa-download" /> Download
+                        </a>
+                      </div>
+                    ) : (
+                      <div className="ai-msg-bubble">
+                        {m.content}
+                        {m.role === "assistant" && (
+                          <button
+                            type="button"
+                            className={`ai-speak-btn ${speakingIdx === i ? "is-speaking" : ""}`}
+                            onClick={() => speakMessage(m.content, i)}
+                            aria-label={speakingIdx === i ? "Stop reading" : "Read aloud"}
+                            title={speakingIdx === i ? "Stop reading" : "Read aloud"}
+                          >
+                            <i className={`fas ${speakingIdx === i ? "fa-volume-xmark" : "fa-volume-high"}`} />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
                 {aiLoading && (
@@ -816,19 +1257,102 @@ export default function HomePage() {
                 )}
               </div>
 
+              {aiAttachments.length > 0 && (
+                <div className="ai-attachments-row" aria-label="Pending uploads">
+                  {aiAttachments.map((f, idx) => (
+                    <div key={idx} className="ai-attachment-chip">
+                      {f.type.startsWith("image/") ? (
+                        <img className="ai-attachment-thumb" src={f.dataUrl} alt={f.name} />
+                      ) : (
+                        <i className={`fas ${fileIconClass(f.type, f.name)} ai-attachment-icon`} />
+                      )}
+                      <div className="ai-attachment-meta">
+                        <span className="ai-attachment-name" title={f.name}>{f.name}</span>
+                        <span className="ai-attachment-size">{humanFileSize(f.size)}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="ai-attachment-remove"
+                        onClick={() => removeAttachment(idx)}
+                        aria-label="Remove attachment"
+                        title="Remove"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <form
                 className="ai-chat-form"
                 onSubmit={(e) => { e.preventDefault(); sendAi(); }}
               >
                 <input
+                  ref={aiFileInputRef}
+                  type="file"
+                  multiple
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    handleFilePicked(e.target.files);
+                    e.target.value = ""; // allow re-selecting same file
+                  }}
+                />
+                <button
+                  type="button"
+                  className="ai-attach-btn"
+                  onClick={() => aiFileInputRef.current?.click()}
+                  disabled={!user || aiLoading}
+                  aria-label="Attach files"
+                  title="Attach files (image, PDF, Word, Excel, PowerPoint, audio…)"
+                >
+                  <i className="fas fa-plus" />
+                </button>
+                <button
+                  type="button"
+                  className={`ai-mic-btn ${voiceListening ? "is-listening" : ""} ${voiceTranscribing ? "is-transcribing" : ""}`}
+                  onClick={toggleVoiceInput}
+                  disabled={!user || aiLoading || voiceTranscribing}
+                  aria-label={
+                    voiceTranscribing ? "Transcribing…" :
+                    voiceListening ? "Stop recording" : "Record voice message"
+                  }
+                  title={
+                    voiceTranscribing ? "Transcribing your voice…" :
+                    voiceListening ? "Click to stop and transcribe" :
+                    "Click to start recording. Click again to stop."
+                  }
+                >
+                  <i className={`fas ${
+                    voiceTranscribing ? "fa-spinner fa-spin" :
+                    voiceListening ? "fa-stop" : "fa-microphone"
+                  }`} />
+                </button>
+                <input
+                  ref={aiInputRef}
                   type="text"
                   value={aiInput}
                   onChange={(e) => setAiInput(e.target.value)}
-                  placeholder={user ? "Ask the AI instructor..." : "Log in to chat"}
+                  placeholder={
+                    !user
+                      ? "Log in to chat"
+                      : voiceTranscribing
+                      ? "Transcribing your voice…"
+                      : voiceListening
+                      ? "Recording… click stop when done"
+                      : pendingGen
+                      ? `Describe the ${KIND_LABEL[pendingGen]} to generate...`
+                      : aiAttachments.length > 0
+                      ? "Add a question about your files (optional) and send"
+                      : "Ask the AI instructor..."
+                  }
                   disabled={!user || aiLoading}
                 />
-                <button type="submit" disabled={!user || aiLoading || !aiInput.trim()}>
-                  <i className="fas fa-paper-plane" />
+                <button
+                  type="submit"
+                  disabled={!user || aiLoading || (!aiInput.trim() && aiAttachments.length === 0)}
+                >
+                  <i className={pendingGen ? "fas fa-wand-magic-sparkles" : "fas fa-paper-plane"} />
                 </button>
               </form>
             </div>

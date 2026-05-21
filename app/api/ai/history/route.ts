@@ -11,7 +11,13 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import clientPromise from "@/lib/mongodb";
 
-type ChatMessage = { role: "user" | "assistant"; content: string };
+// `kind` distinguishes plain text from generated media so the UI can render an
+// <img> for image messages. Default is "text" for backward compatibility.
+type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+  kind?: "text" | "image";
+};
 
 function uid(session: { user?: { id?: string; email?: string | null } } | null): string | null {
   if (!session?.user) return null;
@@ -58,7 +64,12 @@ export async function POST(req: Request) {
         (m.role === "user" || m.role === "assistant") &&
         typeof m.content === "string"
     )
-    .map((m) => ({ role: m.role, content: m.content.slice(0, 8000) }));
+    .map((m) => {
+      const kind: "text" | "image" = m.kind === "image" ? "image" : "text";
+      // Images are stored as data: URLs which can be long, so we allow more.
+      const max = kind === "image" ? 2_000_000 : 8000;
+      return { role: m.role, content: m.content.slice(0, max), kind };
+    });
 
   try {
     const client = await clientPromise;

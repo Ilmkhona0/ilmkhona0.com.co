@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import clientPromise from "../../../lib/mongodb";
-import { ObjectId } from "mongodb";
+import { ObjectId, type Db } from "mongodb";
 
 /**
  * Comment schema (collection: "comments")
@@ -30,15 +30,40 @@ function isAdminReq(req: NextRequest): boolean {
   return req.cookies.get("role")?.value === "admin";
 }
 
+// How many comments a single GET returns at most. Keeps each request light
+// so it frees its database connection quickly under heavy load. Raise this
+// if you ever want more comments visible at once.
+const COMMENTS_LIMIT = 100;
+
+// Make sure the index on `date` exists. Without it, sorting by date forces
+// MongoDB to scan the whole collection and sort it in memory on every
+// request — the thing that made us throw 500s under load. createIndex is
+// idempotent (does nothing if the index already exists), and we cache a
+// flag so we only attempt it once per running server instance.
+let indexEnsured = false;
+async function ensureCommentIndexes(db: Db) {
+  if (indexEnsured) return;
+  try {
+    await db.collection("comments").createIndex({ date: -1 });
+    indexEnsured = true;
+  } catch (err) {
+    // Don't fail the request just because index creation hit a snag;
+    // the query still works, just slower.
+    console.error("ensureCommentIndexes error:", err);
+  }
+}
+
 // ---------- GET: list ----------
 export async function GET() {
   try {
     const client = await clientPromise;
     const db = client.db();
+    await ensureCommentIndexes(db);
     const docs = (await db
       .collection<CommentDoc>("comments")
       .find({})
       .sort({ date: -1 })
+      .limit(COMMENTS_LIMIT)
       .toArray()) as CommentDoc[];
 
     const comments = docs.map((c) => ({
