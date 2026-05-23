@@ -1,4 +1,4 @@
-"""Build the NOMIN AI study platform pitch deck following the
+"""Build the NOMI AI study platform pitch deck following the
 Customer Court Battle - Step 1 Group Presentations template."""
 
 from pptx import Presentation
@@ -84,7 +84,7 @@ def add_bullets(slide, x, y, w, h, items, *, size=16, color=INK, bullet="•"):
 def add_footer(slide, page_num, total):
     # Left side branding
     add_text(slide, Inches(0.4), Inches(7.05), Inches(5), Inches(0.3),
-             "NOMIN  ·  AI Study Buddy", size=10, bold=True, color=DEEP_RED)
+             "NOMI  ·  AI Study Buddy", size=10, bold=True, color=DEEP_RED)
     # Right side page number
     add_text(slide, Inches(11.5), Inches(7.05), Inches(1.8), Inches(0.3),
              f"{page_num} / {total}", size=10, color=DEEP_RED, align=PP_ALIGN.RIGHT)
@@ -107,7 +107,7 @@ def make_title_slide(prs):
 
     # Big title
     add_text(slide, Inches(0.7), Inches(1.8), Inches(12), Inches(1.6),
-             "NOMIN", size=96, bold=True, color=DEEP_RED)
+             "NOMI", size=96, bold=True, color=DEEP_RED)
     add_text(slide, Inches(0.7), Inches(3.5), Inches(12), Inches(0.8),
              "Your AI Study Buddy", size=36, bold=True, color=INK)
     add_text(slide, Inches(0.7), Inches(4.3), Inches(12), Inches(0.6),
@@ -120,7 +120,7 @@ def make_title_slide(prs):
              "University of Europe for Applied Sciences  ·  Entrepreneurship Course",
              size=12, bold=True, color=DEEP_RED)
     add_text(slide, Inches(0.7), Inches(6.15), Inches(8), Inches(0.4),
-             "Presented by Team NOMIN", size=12, color=INK)
+             "Presented by Team NOMI", size=12, color=INK)
 
     add_footer(slide, 1, 8)
     return slide
@@ -163,7 +163,7 @@ def slide_idea(slide):
     # Big statement card
     card = add_rect(slide, Inches(0.7), Inches(2.2), Inches(12), Inches(1.8), WHITE)
     add_text(slide, Inches(1.0), Inches(2.45), Inches(11.4), Inches(1.4),
-             "NOMIN is an AI study buddy that turns lecture notes, slides,\n"
+             "NOMI is an AI study buddy that turns lecture notes, slides,\n"
              "and textbooks into a personal tutor — available 24/7, in any\n"
              "language, on any device.",
              size=22, bold=True, color=INK)
@@ -175,7 +175,7 @@ def slide_idea(slide):
     pw = Inches((12 - 0.4) / 3 - 0.2)
     titles = ["Understand", "Practice", "Master"]
     descs = [
-        "Upload any material — NOMIN summarizes it in your style and "
+        "Upload any material — NOMI summarizes it in your style and "
         "explains it the way you learn best.",
         "Auto-generates quizzes, flashcards, and mock exams from your "
         "course content.",
@@ -390,7 +390,7 @@ def make_thanks_slide(prs):
     # Contact strip
     add_rect(slide, Inches(0.7), Inches(5.8), Inches(12), Inches(1.0), WHITE)
     add_text(slide, Inches(0.9), Inches(5.92), Inches(11), Inches(0.4),
-             "Team NOMIN  ·  hello@nomin.study",
+             "Team NOMI  ·  hello@nomi.study",
              size=14, bold=True, color=DEEP_RED)
     add_text(slide, Inches(0.9), Inches(6.32), Inches(11), Inches(0.4),
              "University of Europe for Applied Sciences  ·  Entrepreneurship 2026",
@@ -406,7 +406,7 @@ def build():
 
     make_title_slide(prs)
     make_section_slide(prs, 1, "OUR START-UP IDEA IS…",
-                       "NOMIN turns any course into a personal AI tutor.",
+                       "NOMI turns any course into a personal AI tutor.",
                        slide_idea, page=2)
     make_section_slide(prs, 2, "OUR PRIMARY CUSTOMER IS…",
                        "European university students who study smarter, not harder.",
@@ -415,7 +415,7 @@ def build():
                        "Understand the material, pass exams, stay sane.",
                        slide_need, page=4)
     make_section_slide(prs, 4, "OUR IMPACT",
-                       "NOMIN reduces drop-outs and improves grades.",
+                       "NOMI reduces drop-outs and improves grades.",
                        slide_impact, page=5)
     make_section_slide(prs, 5, "WHY THEY'LL CARE",
                        "A personal tutor in your pocket — for the price of a coffee.",
@@ -425,7 +425,7 @@ def build():
                        slide_business, page=7)
     make_thanks_slide(prs)
 
-    out = "/home/user/ilmkhona0.com.co/presentations/NOMIN_Startup_Pitch.pptx"
+    out = "/home/user/ilmkhona0.com.co/presentations/NOMI_Startup_Pitch.pptx"
     prs.save(out)
     print(f"Saved: {out}")
 
