@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, use } from "react";
 import Link from "next/link";
+import { useSession, signOut } from "next-auth/react";
+import ShareButton from "../../components/ShareButton";
 
 type FileItem = {
   name: string;
@@ -68,14 +70,43 @@ function formatDate(iso: string) {
   } catch { return iso; }
 }
 
+/** Split a filename into base + extension. The extension is locked on rename —
+ *  admins can change the name but never the file format. */
+function splitName(name: string): { base: string; ext: string } {
+  const dot = name.lastIndexOf(".");
+  if (dot > 0) return { base: name.slice(0, dot), ext: name.slice(dot) };
+  return { base: name, ext: "" };
+}
+
+/** Split a (possibly path-prefixed) name into its directory and leaf parts. */
+function splitPath(name: string): { dir: string; leaf: string } {
+  const slash = name.lastIndexOf("/");
+  if (slash >= 0) return { dir: name.slice(0, slash + 1), leaf: name.slice(slash + 1) };
+  return { dir: "", leaf: name };
+}
+
+// Resize handles for the preview window: 4 edges + 4 corners.
+const LB_HANDLES: { d: string; sx: number; sy: number }[] = [
+  { d: "n", sx: 0, sy: -1 }, { d: "s", sx: 0, sy: 1 },
+  { d: "e", sx: 1, sy: 0 }, { d: "w", sx: -1, sy: 0 },
+  { d: "ne", sx: 1, sy: -1 }, { d: "nw", sx: -1, sy: -1 },
+  { d: "se", sx: 1, sy: 1 }, { d: "sw", sx: -1, sy: 1 },
+];
+
 export default function CategoryPage({ params }: { params: Promise<{ folder: string }> }) {
   const { folder: rawFolder } = use(params);
   const folder = (FOLDERS.includes(rawFolder as Folder) ? rawFolder : "files") as Folder;
 
   const [items, setItems] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [user, setUser] = useState<{ username?: string; name?: string; email?: string } | null>(null);
+
+  // Use the real NextAuth session (same source the home page uses) so the
+  // header reflects the actual login state. The previous sessionStorage-based
+  // check never got populated by Google/credential login, which is why folder
+  // pages always showed "Login" even when signed in.
+  const { data: session } = useSession();
+  const user = session?.user;
+  const isAdmin = !!user?.isAdmin;
 
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<Sort>("date");
@@ -88,15 +119,42 @@ export default function CategoryPage({ params }: { params: Promise<{ folder: str
   const [renamingUrl, setRenamingUrl] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
+  // Current sub-folder being viewed within this category (path with trailing /).
+  const [subPath, setSubPath] = useState("");
+
+  // Multi-select (admin) for bulk delete.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Free-form drag resize for the preview window (mouse + touch).
+  const [lightboxDims, setLightboxDims] = useState<{ w: number; h: number } | null>(null);
+  const lbResizeStart = useRef<{ x: number; y: number; w: number; h: number; sx: number; sy: number } | null>(null);
+  function onLbResizeDown(e: React.PointerEvent<HTMLDivElement>, sx: number, sy: number) {
+    e.preventDefault();
+    e.stopPropagation();
+    const box = e.currentTarget.parentElement as HTMLElement | null;
+    if (!box) return;
+    const r = box.getBoundingClientRect();
+    lbResizeStart.current = { x: e.clientX, y: e.clientY, w: r.width, h: r.height, sx, sy };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  }
+  function onLbResizeMove(e: React.PointerEvent<HTMLDivElement>) {
+    const s = lbResizeStart.current;
+    if (!s) return;
+    // Centered modal: ×2 so the grabbed edge tracks the cursor; sx/sy pick edge.
+    const dx = (e.clientX - s.x) * 2 * s.sx;
+    const dy = (e.clientY - s.y) * 2 * s.sy;
+    const w = Math.max(300, Math.min(window.innerWidth - 32, s.w + dx));
+    const h = Math.max(240, Math.min(window.innerHeight - 32, s.h + dy));
+    setLightboxDims({ w, h });
+  }
+  function onLbResizeUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (!lbResizeStart.current) return;
+    lbResizeStart.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+  }
+
   useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem("ilm_user");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        setUser(parsed);
-        setIsAdmin(!!parsed.isAdmin);
-      }
-    } catch { /* ignore */ }
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folder, sort, order, q]);
@@ -166,10 +224,48 @@ export default function CategoryPage({ params }: { params: Promise<{ folder: str
     await refresh();
   }
 
+  // Delete a whole folder = every file whose name sits under that folder path.
+  async function handleDeleteFolder(folderName: string) {
+    if (!isAdmin) return;
+    const prefix = subPath + folderName + "/";
+    const inside = items.filter((it) => it.name.startsWith(prefix));
+    if (!inside.length) return;
+    if (!confirm(`Delete folder "${folderName}" and all ${inside.length} file(s) inside? This cannot be undone.`)) return;
+    for (const it of inside) {
+      await fetch(`/api/admin/upload?url=${encodeURIComponent(it.url)}`, { method: "DELETE" });
+    }
+    await refresh();
+  }
+
+  function toggleSelect(url: string) {
+    setSelected((prev) => {
+      const n = new Set(prev);
+      if (n.has(url)) n.delete(url); else n.add(url);
+      return n;
+    });
+  }
+  function exitSelect() { setSelectMode(false); setSelected(new Set()); }
+  async function bulkDelete() {
+    if (!isAdmin || !selected.size) return;
+    if (!confirm(`Delete ${selected.size} selected file(s)? This cannot be undone.`)) return;
+    for (const url of selected) {
+      await fetch(`/api/admin/upload?url=${encodeURIComponent(url)}`, { method: "DELETE" });
+    }
+    setSelected(new Set());
+    setSelectMode(false);
+    await refresh();
+  }
+
   async function commitRename(it: FileItem) {
-    const newName = renameValue.trim();
+    const typed = renameValue.trim();
     setRenamingUrl(null);
-    if (!newName || newName === it.name) return;
+    // Keep the folder path AND the extension — only the leaf base name changes.
+    const { dir, leaf } = splitPath(it.name);
+    const { ext } = splitName(leaf);
+    const newBase = splitName(splitPath(typed).leaf).base || typed;
+    if (!newBase) return;
+    const newName = dir + newBase + ext;
+    if (newName === it.name) return;
     const res = await fetch("/api/admin/upload", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -184,12 +280,29 @@ export default function CategoryPage({ params }: { params: Promise<{ folder: str
   }
 
   function logout() {
-    sessionStorage.removeItem("ilm_user");
-    setUser(null);
-    setIsAdmin(false);
+    signOut({ callbackUrl: "/" });
   }
 
   const empty = !loading && items.length === 0;
+
+  // --- Folder grouping: turn path-named uploads into navigable folders ---
+  const searching = q.trim().length > 0;
+  const subFolders: string[] = [];
+  const filesHere: FileItem[] = [];
+  const seenFolders = new Set<string>();
+  for (const it of items) {
+    if (searching) { filesHere.push(it); continue; }
+    if (!it.name.startsWith(subPath)) continue;
+    const rest = it.name.slice(subPath.length);
+    const slash = rest.indexOf("/");
+    if (slash >= 0) {
+      const f = rest.slice(0, slash);
+      if (!seenFolders.has(f)) { seenFolders.add(f); subFolders.push(f); }
+    } else {
+      filesHere.push(it);
+    }
+  }
+  const crumbs = subPath ? subPath.split("/").filter(Boolean) : [];
 
   // header gradient varies by folder for visual distinction
   const headerGradient = useMemo(() => {
@@ -216,11 +329,27 @@ export default function CategoryPage({ params }: { params: Promise<{ folder: str
             <span className="cat-count">{items.length}</span>
           </div>
           <div className="cat-user-block">
+            <ShareButton className="cat-share" />
             {user ? (
               <>
-                <span className="username" style={{ color: "#fff" }}>{user.username || user.name || user.email}</span>
-                {isAdmin && <Link href="/admin" className="cat-admin-link">Admin</Link>}
-                <button onClick={logout} className="cat-logout">Logout</button>
+                <div className={`user-chip ${isAdmin ? "" : "avatar-only"}`} title={user.email || user.name || ""}>
+                  {user.image ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={user.image} alt="" className="user-avatar" referrerPolicy="no-referrer" />
+                  ) : (
+                    <span className="user-avatar user-avatar-fallback" aria-hidden="true">
+                      {(user.username || user.name || user.email || "?")[0]?.toUpperCase()}
+                    </span>
+                  )}
+                  {/* Only the admin keeps the full name; regular users show just the avatar. */}
+                  {isAdmin && (
+                    <span className="username">{user.username || user.name || user.email}</span>
+                  )}
+                </div>
+                {isAdmin && <span className="cat-admin-link" title="You are signed in as admin">Admin</span>}
+                <button onClick={logout} className="cat-logout cat-logout-icon" aria-label="Log out" title="Log out">
+                  <i className="fas fa-right-from-bracket" />
+                </button>
               </>
             ) : (
               <Link href="/auth" className="cat-admin-link">Login</Link>
@@ -260,6 +389,15 @@ export default function CategoryPage({ params }: { params: Promise<{ folder: str
 
         {isAdmin && (
           <button
+            className="cat-select-toggle"
+            onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
+          >
+            <i className={`fas ${selectMode ? "fa-xmark" : "fa-square-check"}`} /> {selectMode ? "Cancel" : "Select"}
+          </button>
+        )}
+
+        {isAdmin && (
+          <button
             className="cat-upload-btn"
             onClick={() => fileInput.current?.click()}
             disabled={uploading}
@@ -281,6 +419,18 @@ export default function CategoryPage({ params }: { params: Promise<{ folder: str
         )}
       </div>
 
+      {selectMode && (
+        <div className="cat-bulkbar">
+          <span>{selected.size} selected</span>
+          <button onClick={() => setSelected(new Set(filesHere.map((f) => f.url)))}>Select all</button>
+          <button onClick={() => setSelected(new Set())}>Clear</button>
+          <button className="cat-bulk-delete" onClick={bulkDelete} disabled={!selected.size}>
+            <i className="fas fa-trash" /> Delete selected
+          </button>
+          <button onClick={exitSelect}>Done</button>
+        </div>
+      )}
+
       <main className="cat-grid-wrap">
         {loading && <div className="cat-loading">Loading…</div>}
         {empty && (
@@ -290,12 +440,64 @@ export default function CategoryPage({ params }: { params: Promise<{ folder: str
             {isAdmin && <p style={{ opacity: .7, fontSize: 14 }}>Click the Upload button to add the first one.</p>}
           </div>
         )}
+        {!searching && crumbs.length > 0 && (
+          <div className="cat-breadcrumb">
+            <button onClick={() => setSubPath("")}><i className="fas fa-house" /> {TITLE[folder]}</button>
+            {crumbs.map((seg, i) => {
+              const target = crumbs.slice(0, i + 1).join("/") + "/";
+              return (
+                <span key={target}>
+                  <i className="fas fa-chevron-right cat-breadcrumb-sep" />
+                  <button onClick={() => setSubPath(target)}>{seg}</button>
+                </span>
+              );
+            })}
+          </div>
+        )}
         <div className="cat-grid">
-          {items.map((it) => (
-            <article key={it.url} className="cat-card">
+          {!searching && subFolders.map((f) => (
+            <article
+              key={`dir-${f}`}
+              className="cat-card cat-folder-card"
+              onClick={() => setSubPath(subPath + f + "/")}
+              title={`Open ${f}`}
+            >
+              {isAdmin && (
+                <button
+                  type="button"
+                  className="cat-folder-delete"
+                  onClick={(e) => { e.stopPropagation(); handleDeleteFolder(f); }}
+                  title="Delete folder"
+                  aria-label="Delete folder"
+                >
+                  <i className="fas fa-trash" />
+                </button>
+              )}
+              <div className="cat-card-media cat-folder-media">
+                <i className="fas fa-folder" />
+              </div>
+              <div className="cat-card-body">
+                <h3 className="cat-card-title" title={f}>{f}</h3>
+                <div className="cat-card-meta"><span><i className="fas fa-folder-open" /> Folder</span></div>
+              </div>
+            </article>
+          ))}
+          {filesHere.map((it) => (
+            <article key={it.url} className={`cat-card ${selected.has(it.url) ? "is-selected" : ""}`}>
+              {selectMode && (
+                <button
+                  type="button"
+                  className={`cat-select-check ${selected.has(it.url) ? "is-on" : ""}`}
+                  onClick={(e) => { e.stopPropagation(); toggleSelect(it.url); }}
+                  aria-label={selected.has(it.url) ? "Deselect" : "Select"}
+                >
+                  <i className="fas fa-check" />
+                </button>
+              )}
               <div
                 className="cat-card-media"
                 onClick={() => {
+                  if (selectMode) { toggleSelect(it.url); return; }
                   if (canPreview(it.name)) {
                     setPreview(it);
                   } else {
@@ -340,7 +542,7 @@ export default function CategoryPage({ params }: { params: Promise<{ folder: str
                     }}
                   />
                 ) : (
-                  <h3 className="cat-card-title" title={it.name}>{it.name}</h3>
+                  <h3 className="cat-card-title" title={it.name}>{searching ? it.name : splitPath(it.name).leaf}</h3>
                 )}
                 <div className="cat-card-meta">
                   <span><i className="far fa-clock" /> {formatDate(it.uploadedAt)}</span>
@@ -359,7 +561,7 @@ export default function CategoryPage({ params }: { params: Promise<{ folder: str
                     <>
                       <button
                         className="cat-action"
-                        onClick={() => { setRenamingUrl(it.url); setRenameValue(it.name); }}
+                        onClick={() => { setRenamingUrl(it.url); setRenameValue(splitName(splitPath(it.name).leaf).base); }}
                         title="Rename"
                       >
                         <i className="fas fa-pen" />
@@ -379,12 +581,17 @@ export default function CategoryPage({ params }: { params: Promise<{ folder: str
       {/* Lightbox preview */}
       {preview && (
         <div className="lightbox-backdrop" onClick={() => setPreview(null)}>
-          <div className="lightbox-content size-large" onClick={(e) => e.stopPropagation()}>
+          <div
+            className={`lightbox-content ${lightboxDims ? "size-custom" : "size-large"}`}
+            style={lightboxDims ? { width: lightboxDims.w, height: lightboxDims.h, maxHeight: "none" } : undefined}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="lightbox-header">
               <span className="lightbox-title">{preview.name}</span>
               <div className="lightbox-toolbar">
-                <a href={preview.url} download={preview.name} className="lightbox-action lightbox-download">
-                  <i className="fas fa-download" /> Download
+                <ShareButton className="lightbox-action lightbox-share" fileUrl={preview.url} fileName={splitPath(preview.name).leaf} fileSize={preview.size} text={splitPath(preview.name).leaf} />
+                <a href={preview.url} download={preview.name} className="lightbox-action lightbox-download" title="Download" aria-label="Download">
+                  <i className="fas fa-download" />
                 </a>
                 <button onClick={() => setPreview(null)} className="lightbox-action">
                   <i className="fas fa-times" />
@@ -401,6 +608,17 @@ export default function CategoryPage({ params }: { params: Promise<{ folder: str
                 <iframe src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(preview.url)}`} style={{ width: "100%", height: "100%", border: "none" }} />
               )}
             </div>
+            {LB_HANDLES.map((hd) => (
+              <div
+                key={hd.d}
+                className={`lightbox-resize lr-${hd.d}`}
+                onPointerDown={(e) => onLbResizeDown(e, hd.sx, hd.sy)}
+                onPointerMove={onLbResizeMove}
+                onPointerUp={onLbResizeUp}
+                role="separator"
+                aria-label="Drag to resize preview"
+              />
+            ))}
           </div>
         </div>
       )}

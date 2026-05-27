@@ -14,6 +14,7 @@ import Credentials from "next-auth/providers/credentials";
 import { MongoDBAdapter } from "@auth/mongodb-adapter";
 import bcrypt from "bcryptjs";
 import clientPromise from "./lib/mongodb";
+import { getAdminConfig } from "./lib/adminConfig";
 
 // Extend the session/user types so TS knows about isAdmin.
 declare module "next-auth" {
@@ -36,9 +37,10 @@ declare module "next-auth/jwt" {
     uid?: string;
   }
 }
-// Admin shortcut (matches your existing /api/auth/login behavior).
-const ADMIN_USERNAMES = new Set(["ilmkhona0", "ilmkhona@gmail.com"]);
-const ADMIN_PASSWORD = "MySecret123";
+// Google login with this email is always trusted as admin (Google verifies the
+// email), serving as a permanent recovery path even if the DB credentials are
+// changed from the Admin settings page.
+const RECOVERY_ADMIN_EMAIL = "ilmkhona@gmail.com";
 
 // Helper: only enable an OAuth provider if both its client ID and secret are
 // actually present in the environment. Empty/missing values make NextAuth v5
@@ -59,6 +61,10 @@ if (hasEnv("AUTH_GOOGLE_ID", "AUTH_GOOGLE_SECRET")) {
       clientId: process.env.AUTH_GOOGLE_ID!,
       clientSecret: process.env.AUTH_GOOGLE_SECRET!,
       allowDangerousEmailAccountLinking: true,
+      // Always show Google's account picker instead of silently reusing the
+      // last-used account. Lets users with multiple Google accounts choose
+      // which one to sign in with (e.g. the admin account).
+      authorization: { params: { prompt: "select_account" } },
     })
   );
 }
@@ -90,15 +96,27 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const password = String(credentials?.password || "");
         if (!email || !password) return null;
 
-        // Admin shortcut (hard-coded credentials)
-        if (ADMIN_USERNAMES.has(email) && password === ADMIN_PASSWORD) {
-          return {
-            id: "admin",
-            email: "ilmkhona@gmail.com",
-            name: "ilmkhona0",
-            username: "ilmkhona0",
-            isAdmin: true,
-          };
+        // Admin login — credentials live in the database and are editable from
+        // the Admin settings page. The recovery email is also accepted so the
+        // owner can never be locked out.
+        const adminCfg = await getAdminConfig();
+        const isAdminLogin =
+          email === adminCfg.loginName.trim().toLowerCase() ||
+          email === RECOVERY_ADMIN_EMAIL;
+        if (isAdminLogin) {
+          const ok = await bcrypt.compare(password, adminCfg.passwordHash);
+          if (ok) {
+            return {
+              id: "admin",
+              email: RECOVERY_ADMIN_EMAIL,
+              name: adminCfg.loginName,
+              username: adminCfg.loginName,
+              isAdmin: true,
+            };
+          }
+          // Wrong admin password — do NOT fall through to auto-registration,
+          // which previously could mint an admin account for this email.
+          throw new Error("Incorrect admin password.");
         }
 
         const client = await clientPromise;
@@ -116,14 +134,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const existing = await users.findOne({ email });
 
         if (existing) {
-          // Existing user -> verify password.
+          // Existing account → verify password.
           const stored: string = existing.password || "";
           let ok = false;
           if (stored.startsWith("$2")) {
-            // bcrypt hash
             ok = await bcrypt.compare(password, stored);
           } else {
-            // legacy plaintext (from your old register route) -- one-time upgrade
+            // legacy plaintext (from the old register route) — one-time upgrade
             ok = stored === password;
             if (ok) {
               const hashed = await bcrypt.hash(password, 10);
@@ -140,26 +157,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           };
         }
 
-        // AUTO-REGISTER: no existing user -> create one with this email + password.
-        if (password.length < 6) {
-          throw new Error("Password must be at least 6 characters.");
-        }
-        const hashed = await bcrypt.hash(password, 10);
-        const username = email.split("@")[0];
-        const insert = await users.insertOne({
-          email,
-          username,
-          password: hashed,
-          createdAt: new Date(),
-          provider: "credentials",
-        });
-        return {
-          id: String(insert.insertedId),
-          email,
-          name: username,
-          username,
-          isAdmin: false,
-        };
+        // No matching account. New email accounts are created ONLY through the
+        // verified Sign up flow (email code) or via Google/GitHub — never
+        // auto-created from a login attempt. So an unknown email is rejected.
+        return null;
       },
     }),
   ],
@@ -176,15 +177,21 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
       return true;
     },
-    async jwt({ token, user }) {
+    async jwt({ token, user, account }) {
       if (user) {
         token.uid = user.id;
         token.isAdmin = !!user.isAdmin;
         token.username =
           (user as { username?: string }).username || user.name || user.email;
       }
-      // Allow the admin shortcut for any session whose email is the admin email.
-      if (token.email && ADMIN_USERNAMES.has(String(token.email).toLowerCase())) {
+      // Google login with the recovery admin email is trusted (Google verifies
+      // ownership). We intentionally do NOT grant admin by email on the
+      // credentials path — that would let anyone claim the email.
+      if (
+        account?.provider === "google" &&
+        token.email &&
+        String(token.email).toLowerCase() === RECOVERY_ADMIN_EMAIL
+      ) {
         token.isAdmin = true;
       }
       return token;

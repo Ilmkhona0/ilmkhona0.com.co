@@ -2,6 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
+
+/** Split a filename into its base and extension. The extension is locked when
+ *  renaming — admins can change the name but never the format. */
+function splitName(name: string): { base: string; ext: string } {
+  const dot = name.lastIndexOf(".");
+  if (dot > 0) return { base: name.slice(0, dot), ext: name.slice(dot) };
+  return { base: name, ext: "" };
+}
 
 type FileItem = {
   name: string;
@@ -40,17 +49,11 @@ export default function AdminFilesPage() {
   const [q, setQ] = useState("");
   const [renamingUrl, setRenamingUrl] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const [isAdmin, setIsAdmin] = useState(false);
 
-  useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem("ilm_user");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        setIsAdmin(!!parsed.isAdmin);
-      }
-    } catch { /* ignore */ }
-  }, []);
+  // Use the real NextAuth session (the old sessionStorage check never got set
+  // by Google/credential login, so this page always said "Admin only").
+  const { data: session, status } = useSession();
+  const isAdmin = !!session?.user?.isAdmin;
 
   useEffect(() => {
     refresh();
@@ -85,9 +88,14 @@ export default function AdminFilesPage() {
   }
 
   async function commitRename(it: FileItem) {
-    const newName = renameValue.trim();
+    const typed = renameValue.trim();
     setRenamingUrl(null);
-    if (!newName || newName === it.name) return;
+    // The format/extension is locked — only the base name may change.
+    const { ext } = splitName(it.name);
+    const newBase = splitName(typed).base || typed;
+    if (!newBase) return;
+    const newName = newBase + ext;
+    if (newName === it.name) return;
     const res = await fetch("/api/admin/upload", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -98,6 +106,14 @@ export default function AdminFilesPage() {
       alert(d.error || "Rename failed"); return;
     }
     await refresh();
+  }
+
+  if (status === "loading") {
+    return (
+      <div className="ilmkhona0">
+        <div className="admin-files-empty"><h1>Loading…</h1></div>
+      </div>
+    );
   }
 
   if (!isAdmin) {
@@ -207,7 +223,7 @@ export default function AdminFilesPage() {
                   </a>
                   <button
                     className="admin-files-action"
-                    onClick={() => { setRenamingUrl(it.url); setRenameValue(it.name); }}
+                    onClick={() => { setRenamingUrl(it.url); setRenameValue(splitName(it.name).base); }}
                     title="Rename"
                   >
                     <i className="fas fa-pen" />

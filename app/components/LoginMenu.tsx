@@ -7,6 +7,7 @@ export default function LoginMenu() {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState<"google" | "github" | "email" | null>(null);
+  const [showPw, setShowPw] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   // Close on outside click + ESC.
@@ -43,7 +44,7 @@ export default function LoginMenu() {
 
     setLoading(null);
     if (!res || res.error) {
-      setError(res?.error || "Login failed. Try again.");
+      setError("Email or password is incorrect.");
       return;
     }
     setOpen(false);
@@ -65,7 +66,7 @@ export default function LoginMenu() {
       {open && (
         <div className="login-menu" role="dialog" aria-label="Login">
           <h3 className="login-menu-title">Welcome to ilmkhona0</h3>
-          <p className="login-menu-sub">Sign in to comment, chat with the AI, and more.</p>
+          <p className="login-menu-sub">Log in to comment, chat with the AI, and more.</p>
 
           <button
             className="oauth-btn google"
@@ -99,7 +100,12 @@ export default function LoginMenu() {
             <input type="email" name="email" required autoComplete="email" placeholder="you@example.com" />
 
             <label>Password</label>
-            <input type="password" name="password" required autoComplete="current-password" placeholder="At least 6 characters" />
+            <div className="pw-field">
+              <input type={showPw ? "text" : "password"} name="password" required autoComplete="current-password" placeholder="At least 6 characters" />
+              <button type="button" className="pw-toggle" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? "Hide password" : "Show password"} title={showPw ? "Hide password" : "Show password"}>
+                <i className={`fas ${showPw ? "fa-eye-slash" : "fa-eye"}`} />
+              </button>
+            </div>
 
             <button type="submit" className="auth-submit" disabled={!!loading}>
               {loading === "email" ? "Working…" : "Continue"}
@@ -107,7 +113,7 @@ export default function LoginMenu() {
           </form>
 
           <p className="login-menu-foot">
-            New here? Type your email and a password — your account will be created automatically.
+            New here? <a href="/auth" className="login-menu-link">Create an account</a>
           </p>
 
           {error && <p className="auth-error">{error}</p>}

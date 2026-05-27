@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
 import LoginMenu from "./components/LoginMenu";
 import ThemeToggle from "./components/ThemeToggle";
+import ShareButton from "./components/ShareButton";
 
 type Comment = {
   id: string;
@@ -74,6 +75,29 @@ function canPreview(n: string) {
   return isImageName(n) || isVideoName(n) || isAudioName(n) || isPdfName(n) || isTextName(n) || isOfficeName(n);
 }
 
+// Whether a file (by name) is allowed in a given section. Mirrors the server's
+// per-folder validation so we can reject mismatches before uploading — important
+// for whole-folder uploads that may contain mixed formats.
+function isAllowedInFolder(folder: Folder, name: string): boolean {
+  switch (folder) {
+    case "files": return true;
+    case "images": return isImageName(name);
+    case "videos": return isVideoName(name);
+    case "apps": return /\.(apk|ipa|exe|msi|dmg|app|deb|rpm|appimage)$/i.test(name);
+    case "games": return /\.(exe|jar|apk|swf|love|nes|gb|gba|nds|zip)$/i.test(name);
+    default: return true;
+  }
+}
+
+// Resize handles for the preview window: 4 edges + 4 corners. sx/sy say which
+// dimension(s) a handle changes and in which direction.
+const LB_HANDLES: { d: string; sx: number; sy: number }[] = [
+  { d: "n", sx: 0, sy: -1 }, { d: "s", sx: 0, sy: 1 },
+  { d: "e", sx: 1, sy: 0 }, { d: "w", sx: -1, sy: 0 },
+  { d: "ne", sx: 1, sy: -1 }, { d: "nw", sx: -1, sy: -1 },
+  { d: "se", sx: 1, sy: 1 }, { d: "sw", sx: -1, sy: 1 },
+];
+
 export default function HomePage() {
   const { data: session } = useSession();
   const user = session?.user;
@@ -90,6 +114,9 @@ export default function HomePage() {
   });
   const [uploading, setUploading] = useState<Folder | null>(null);
   const fileInputs = useRef<Record<Folder, HTMLInputElement | null>>({
+    images: null, videos: null, apps: null, games: null, files: null,
+  });
+  const folderInputs = useRef<Record<Folder, HTMLInputElement | null>>({
     images: null, videos: null, apps: null, games: null, files: null,
   });
 
@@ -113,11 +140,81 @@ export default function HomePage() {
     if (saved === "sm" || saved === "md" || saved === "lg" || saved === "xl") setPanelSize(saved);
   }, []);
   function changePanelSize(delta: 1 | -1) {
-    const order: PanelSize[] = ["sm", "md", "lg", "xl"];
-    const idx = order.indexOf(panelSize);
-    const next = order[Math.max(0, Math.min(order.length - 1, idx + delta))];
-    setPanelSize(next);
-    try { localStorage.setItem("panelSize", next); } catch { /* ignore */ }
+    if (typeof window === "undefined") return;
+    // Base = current custom dims, or the panel's current rendered size.
+    const el = document.querySelector(".side-panel") as HTMLElement | null;
+    const base =
+      panelDims ??
+      (el
+        ? { w: el.getBoundingClientRect().width, h: el.getBoundingClientRect().height }
+        : { w: 380, h: 560 });
+    // Each click grows/shrinks by 20%, clamped to min/max.
+    const factor = delta === 1 ? 1.2 : 1 / 1.2;
+    const maxW = Math.min(window.innerWidth - 24, 1100);
+    const maxH = window.innerHeight - 90;
+    const w = Math.max(300, Math.min(maxW, Math.round(base.w * factor)));
+    const h = Math.max(360, Math.min(maxH, Math.round(base.h * factor)));
+    const next = { w, h };
+    setPanelDims(next);
+    latestDims.current = next;
+    try {
+      localStorage.setItem("panelDims", JSON.stringify(next));
+      localStorage.removeItem("panelSize");
+    } catch { /* ignore */ }
+  }
+
+  // ---- Free-form drag resize (mouse + touch via Pointer Events) ----
+  // Dragging a handle (corner = both axes, top edge = height, left edge = width)
+  // stores explicit pixel dimensions that override the discrete size classes.
+  // The +/- buttons step the current size by 20%. Dims are clamped + persisted.
+  const [panelDims, setPanelDims] = useState<{ w: number; h: number } | null>(null);
+  const resizeStart = useRef<{ x: number; y: number; w: number; h: number; dir: "both" | "x" | "y" } | null>(null);
+  const latestDims = useRef<{ w: number; h: number } | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("panelDims");
+      if (raw) {
+        const d = JSON.parse(raw);
+        if (d && typeof d.w === "number" && typeof d.h === "number") {
+          setPanelDims(d);
+          latestDims.current = d;
+        }
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  function onResizePointerDown(e: React.PointerEvent<HTMLDivElement>, dir: "both" | "x" | "y") {
+    e.preventDefault();
+    const panel = e.currentTarget.parentElement as HTMLElement | null;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    resizeStart.current = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height, dir };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  }
+  function onResizePointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const s = resizeStart.current;
+    if (!s) return;
+    // The panel is anchored to the bottom-right, so dragging the handle up/left
+    // enlarges it (positive delta). dir restricts which axis changes:
+    //   "both" = corner, "x" = left edge (width), "y" = top edge (height).
+    const dx = s.x - e.clientX;
+    const dy = s.y - e.clientY;
+    const maxW = Math.min(window.innerWidth - 24, 1100);
+    const maxH = window.innerHeight - 90;
+    const w = s.dir === "y" ? s.w : Math.max(300, Math.min(maxW, s.w + dx));
+    const h = s.dir === "x" ? s.h : Math.max(360, Math.min(maxH, s.h + dy));
+    const next = { w, h };
+    latestDims.current = next;
+    setPanelDims(next);
+  }
+  function onResizePointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (!resizeStart.current) return;
+    resizeStart.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    try {
+      if (latestDims.current) localStorage.setItem("panelDims", JSON.stringify(latestDims.current));
+    } catch { /* ignore */ }
   }
 
   // AI chat state
@@ -220,6 +317,37 @@ export default function HomePage() {
   const [preview, setPreview] = useState<{ folder: Folder; item: FileItem } | null>(null);
   const [viewerSize, setViewerSize] = useState<ViewerSize>("large");
 
+  // Free-form drag resize for the file preview window (mouse + touch). Custom
+  // pixel dims override the small/default/full presets; the preset buttons and
+  // opening a new file reset it.
+  const [lightboxDims, setLightboxDims] = useState<{ w: number; h: number } | null>(null);
+  const lbResizeStart = useRef<{ x: number; y: number; w: number; h: number; sx: number; sy: number } | null>(null);
+  function onLbResizeDown(e: React.PointerEvent<HTMLDivElement>, sx: number, sy: number) {
+    e.preventDefault();
+    e.stopPropagation();
+    const box = e.currentTarget.parentElement as HTMLElement | null;
+    if (!box) return;
+    const r = box.getBoundingClientRect();
+    lbResizeStart.current = { x: e.clientX, y: e.clientY, w: r.width, h: r.height, sx, sy };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  }
+  function onLbResizeMove(e: React.PointerEvent<HTMLDivElement>) {
+    const s = lbResizeStart.current;
+    if (!s) return;
+    // The window is centered, so dragging an edge moves both sides — multiply by
+    // 2 so the grabbed edge tracks the cursor. sx/sy select the edge/axis.
+    const dx = (e.clientX - s.x) * 2 * s.sx;
+    const dy = (e.clientY - s.y) * 2 * s.sy;
+    const w = Math.max(300, Math.min(window.innerWidth - 32, s.w + dx));
+    const h = Math.max(240, Math.min(window.innerHeight - 32, s.h + dy));
+    setLightboxDims({ w, h });
+  }
+  function onLbResizeUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (!lbResizeStart.current) return;
+    lbResizeStart.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+  }
+
   const [searchQ, setSearchQ] = useState("");
   const [searchResults, setSearchResults] = useState<FileItem[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -251,6 +379,7 @@ export default function HomePage() {
     if (canPreview(item.name)) {
       setPreview({ folder, item });
       setViewerSize("large");
+      setLightboxDims(null);
     } else {
       const a = document.createElement("a");
       a.href = item.url; a.download = item.name; a.click();
@@ -327,12 +456,26 @@ export default function HomePage() {
     }
   }
 
-  async function handleFilesPicked(folder: Folder, files: FileList) {
-    if (!files.length) return;
+  async function handleFilesPicked(folder: Folder, files: FileList | File[]) {
+    const all = Array.from(files);
+    if (!all.length) return;
+    // Reject any file whose format doesn't belong in this section (matters most
+    // for whole-folder uploads that may contain mixed formats).
+    const valid = all.filter((f) => isAllowedInFolder(folder, f.name));
+    const rejected = all.filter((f) => !isAllowedInFolder(folder, f.name));
+    if (rejected.length) {
+      alert(
+        `${rejected.length} file(s) skipped — not allowed in "${SECTION_LABEL[folder]}":\n` +
+        rejected.slice(0, 12).map((f) => f.name).join("\n") +
+        (rejected.length > 12 ? `\n…and ${rejected.length - 12} more` : "") +
+        `\n\nPut those in the matching section (e.g. PDFs / PowerPoint → Files).`
+      );
+    }
+    if (!valid.length) return;
     setUploading(folder);
     const failures: string[] = [];
     try {
-      const queue = Array.from(files);
+      const queue = valid;
       const concurrency = Math.min(4, queue.length);
       const workers: Promise<void>[] = [];
       for (let i = 0; i < concurrency; i++) {
@@ -343,6 +486,9 @@ export default function HomePage() {
             const fd = new FormData();
             fd.append("file", f);
             fd.append("folder", folder);
+            // Preserve subfolder paths when a whole folder was selected.
+            const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath;
+            if (rel) fd.append("customName", rel);
             try {
               const res = await fetch("/api/admin/upload", { method: "POST", body: fd });
               if (!res.ok) {
@@ -756,11 +902,7 @@ export default function HomePage() {
     if (!isAdmin) return null;
     const isUp = uploading === folder;
     return (
-      <div
-        className="card admin-upload-card"
-        onClick={() => fileInputs.current[folder]?.click()}
-        title="Click to upload"
-      >
+      <div className="card admin-upload-card">
         <input
           ref={(el) => { fileInputs.current[folder] = el; }}
           type="file"
@@ -773,8 +915,28 @@ export default function HomePage() {
             e.target.value = "";
           }}
         />
+        <input
+          ref={(el) => { folderInputs.current[folder] = el; }}
+          type="file"
+          multiple
+          style={{ display: "none" }}
+          {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+          onChange={(e) => {
+            const fs = e.target.files;
+            if (fs && fs.length) handleFilesPicked(folder, fs);
+            e.target.value = "";
+          }}
+        />
         <i className={`fas ${isUp ? "fa-spinner fa-spin" : "fa-cloud-arrow-up"}`} style={{ fontSize: 28, color: "#1976d2" }} />
         <div style={{ marginTop: 8, fontWeight: 600, color: "#0d47a1" }}>{isUp ? "Uploading…" : `Add ${SECTION_LABEL[folder].slice(0, -1)}`}</div>
+        <div className="admin-upload-actions">
+          <button type="button" onClick={() => fileInputs.current[folder]?.click()} disabled={isUp}>
+            <i className="fas fa-file-circle-plus" /> Files
+          </button>
+          <button type="button" onClick={() => folderInputs.current[folder]?.click()} disabled={isUp}>
+            <i className="fas fa-folder-tree" /> Folder
+          </button>
+        </div>
       </div>
     );
   }
@@ -870,11 +1032,11 @@ export default function HomePage() {
               <a href="#contact">Contact</a>
             </nav>
           </div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <div className="header-actions">
             <ThemeToggle />
             {user ? (
               <>
-                <div className="user-chip" title={user.email || user.name || ""}>
+                <div className={`user-chip ${isAdmin ? "" : "avatar-only"}`} title={user.email || user.name || ""}>
                   {user.image ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={user.image} alt="" className="user-avatar" referrerPolicy="no-referrer" />
@@ -883,10 +1045,15 @@ export default function HomePage() {
                       {(user.username || user.name || user.email || "?")[0]?.toUpperCase()}
                     </span>
                   )}
-                  <span className="username">{user.username || user.name || user.email}</span>
+                  {/* Only the admin keeps the full name; regular users show just the avatar. */}
+                  {isAdmin && (
+                    <span className="username">{user.username || user.name || user.email}</span>
+                  )}
                 </div>
-                {isAdmin && <Link href="/admin" className="admin-pill">Admin</Link>}
-                <button onClick={logout} className="logout-pill">Logout</button>
+                {isAdmin && <span className="admin-pill" title="You are signed in as admin">Admin</span>}
+                <button onClick={logout} className="logout-pill logout-icon" aria-label="Log out" title="Log out">
+                  <i className="fas fa-right-from-bracket" />
+                </button>
               </>
             ) : (
               <LoginMenu />
@@ -911,6 +1078,7 @@ export default function HomePage() {
         <a href="#contact" onClick={() => setMobileMenuOpen(false)}>
           <i className="fas fa-envelope" /> Contact
         </a>
+        <ShareButton className="sidebar-link" label="Share this site" />
         {isAdmin && (
           <>
             <div className="sidebar-divider" />
@@ -918,13 +1086,23 @@ export default function HomePage() {
             <Link href="/admin" onClick={() => setMobileMenuOpen(false)}>
               <i className="fas fa-shield-halved" /> Admin
             </Link>
-            <Link href="/admin/files" onClick={() => setMobileMenuOpen(false)}>
-              <i className="fas fa-folder-tree" /> Manage files
-            </Link>
-            <Link href="/admin/upload" onClick={() => setMobileMenuOpen(false)}>
-              <i className="fas fa-cloud-arrow-up" /> Upload
-            </Link>
           </>
+        )}
+
+        <div className="sidebar-divider" />
+        <div className="sidebar-section-label">Account</div>
+        {user ? (
+          <button
+            type="button"
+            className="sidebar-link sidebar-logout"
+            onClick={() => { setMobileMenuOpen(false); logout(); }}
+          >
+            <i className="fas fa-right-from-bracket" /> Log out
+          </button>
+        ) : (
+          <Link href="/auth" onClick={() => setMobileMenuOpen(false)}>
+            <i className="fas fa-right-to-bracket" /> Log in
+          </Link>
         )}
       </aside>
 
@@ -1031,7 +1209,7 @@ export default function HomePage() {
                       </div>
                     )}
                   </div>
-                  <div className="preview-card-name">{it.name}</div>
+                  <div className="preview-card-name">{it.name.split("/").pop()}</div>
                 </div>
               ))}
             </div>
@@ -1069,7 +1247,37 @@ export default function HomePage() {
         <i className={panelOpen ? "fas fa-times" : "fas fa-comments"} />
       </button>
 
-      <div className={`side-panel size-${panelSize} ${panelOpen ? "open" : ""}`}>
+      <div
+        className={`side-panel ${panelDims ? "size-custom" : `size-${panelSize}`} ${panelOpen ? "open" : ""}`}
+        style={panelDims ? { width: panelDims.w, height: panelDims.h } : undefined}
+      >
+        <div
+          className="side-panel-resize corner"
+          onPointerDown={(e) => onResizePointerDown(e, "both")}
+          onPointerMove={onResizePointerMove}
+          onPointerUp={onResizePointerUp}
+          role="separator"
+          aria-label="Drag to resize width and height"
+          title="Drag to resize (both)"
+        />
+        <div
+          className="side-panel-resize edge-top"
+          onPointerDown={(e) => onResizePointerDown(e, "y")}
+          onPointerMove={onResizePointerMove}
+          onPointerUp={onResizePointerUp}
+          role="separator"
+          aria-label="Drag to resize height"
+          title="Drag to resize height"
+        />
+        <div
+          className="side-panel-resize edge-left"
+          onPointerDown={(e) => onResizePointerDown(e, "x")}
+          onPointerMove={onResizePointerMove}
+          onPointerUp={onResizePointerUp}
+          role="separator"
+          aria-label="Drag to resize width"
+          title="Drag to resize width"
+        />
         <div className="side-panel-tabs" role="tablist">
           <button
             role="tab"
@@ -1092,9 +1300,8 @@ export default function HomePage() {
               type="button"
               className="panel-size-btn"
               onClick={() => changePanelSize(-1)}
-              disabled={panelSize === "sm"}
-              title="Smaller"
-              aria-label="Smaller panel"
+              title="Smaller (−20%)"
+              aria-label="Shrink panel by 20%"
             >
               <i className="fas fa-minus" />
             </button>
@@ -1102,9 +1309,8 @@ export default function HomePage() {
               type="button"
               className="panel-size-btn"
               onClick={() => changePanelSize(1)}
-              disabled={panelSize === "lg"}
-              title="Larger"
-              aria-label="Larger panel"
+              title="Larger (+20%)"
+              aria-label="Grow panel by 20%"
             >
               <i className="fas fa-plus" />
             </button>
@@ -1368,17 +1574,22 @@ export default function HomePage() {
 
       {preview && (
         <div className="lightbox-backdrop" onClick={closePreview}>
-          <div className={`lightbox-content size-${viewerSize}`} onClick={(e) => e.stopPropagation()}>
+          <div
+            className={`lightbox-content ${lightboxDims ? "size-custom" : `size-${viewerSize}`}`}
+            style={lightboxDims ? { width: lightboxDims.w, height: lightboxDims.h, maxHeight: "none" } : undefined}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="lightbox-header">
               <span className="lightbox-title" title={preview.item.name}>{preview.item.name}</span>
               <div className="lightbox-toolbar">
                 <div className="lightbox-size-group" role="group" aria-label="Window size">
-                  <button className={`lightbox-action lightbox-size ${viewerSize === "small" ? "is-active" : ""}`} onClick={() => setViewerSize("small")} title="Small"><i className="fas fa-compress" /></button>
-                  <button className={`lightbox-action lightbox-size ${viewerSize === "large" ? "is-active" : ""}`} onClick={() => setViewerSize("large")} title="Default"><i className="fas fa-window-maximize" /></button>
-                  <button className={`lightbox-action lightbox-size ${viewerSize === "full" ? "is-active" : ""}`} onClick={() => setViewerSize("full")} title="Full screen"><i className="fas fa-expand" /></button>
+                  <button className={`lightbox-action lightbox-size ${viewerSize === "small" && !lightboxDims ? "is-active" : ""}`} onClick={() => { setViewerSize("small"); setLightboxDims(null); }} title="Small"><i className="fas fa-compress" /></button>
+                  <button className={`lightbox-action lightbox-size ${viewerSize === "large" && !lightboxDims ? "is-active" : ""}`} onClick={() => { setViewerSize("large"); setLightboxDims(null); }} title="Default"><i className="fas fa-window-maximize" /></button>
+                  <button className={`lightbox-action lightbox-size ${viewerSize === "full" && !lightboxDims ? "is-active" : ""}`} onClick={() => { setViewerSize("full"); setLightboxDims(null); }} title="Full screen"><i className="fas fa-expand" /></button>
                 </div>
-                <a href={preview.item.url} download={preview.item.name} target="_blank" rel="noreferrer" className="lightbox-action lightbox-download" title="Download">
-                  <i className="fas fa-download" /> Download
+                <ShareButton className="lightbox-action lightbox-share" fileUrl={preview.item.url} fileName={preview.item.name.split("/").pop()} fileSize={preview.item.size} text={preview.item.name.split("/").pop()} />
+                <a href={preview.item.url} download={preview.item.name} target="_blank" rel="noreferrer" className="lightbox-action lightbox-download" title="Download" aria-label="Download">
+                  <i className="fas fa-download" />
                 </a>
                 {isAdmin && (
                   <button onClick={deleteFromViewer} className="lightbox-action lightbox-delete" title="Delete">
@@ -1406,6 +1617,17 @@ export default function HomePage() {
                 )
               )}
             </div>
+            {LB_HANDLES.map((hd) => (
+              <div
+                key={hd.d}
+                className={`lightbox-resize lr-${hd.d}`}
+                onPointerDown={(e) => onLbResizeDown(e, hd.sx, hd.sy)}
+                onPointerMove={onLbResizeMove}
+                onPointerUp={onLbResizeUp}
+                role="separator"
+                aria-label="Drag to resize preview"
+              />
+            ))}
           </div>
         </div>
       )}

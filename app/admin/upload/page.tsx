@@ -191,7 +191,7 @@ export default function UploadPage() {
               onClick={() => filesInputRef.current?.click()}
             >
               <i className="fas fa-file-circle-plus" />
-              <strong>Choose files</strong>
+              <strong>Select files</strong>
               <span>One or many — Ctrl/Cmd-click to multi-select.</span>
             </button>
             <button
@@ -200,7 +200,7 @@ export default function UploadPage() {
               onClick={() => folderInputRef.current?.click()}
             >
               <i className="fas fa-folder-tree" />
-              <strong>Choose a whole folder</strong>
+              <strong>Select a whole folder</strong>
               <span>Subfolders are preserved as paths in storage.</span>
             </button>
           </div>
