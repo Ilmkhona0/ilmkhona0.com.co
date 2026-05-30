@@ -6,7 +6,12 @@ declare global {
   var _mongoClientPromise: Promise<MongoClient> | undefined;
 }
 
-const options: MongoClientOptions = {};
+const options: MongoClientOptions = {
+  maxPoolSize: 200,          // up from the default 100 (stays under Atlas M0's 500 cap)
+  minPoolSize: 10,           // keep warm connections ready
+  maxIdleTimeMS: 60000,      // recycle idle connections after 60s
+  waitQueueTimeoutMS: 10000, // fail fast instead of hanging if the pool is full
+};
 
 // Lazy-initialised connection. We DON'T throw at module-load time anymore,
 // because Next.js may evaluate this module during build (when env vars aren't
