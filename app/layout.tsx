@@ -41,12 +41,8 @@ export const metadata: Metadata = {
   publisher: "ilmkhona0",
   alternates: { canonical: SITE_URL },
   icons: {
-    icon: [
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/icon.svg", type: "image/svg+xml" },
-    ],
-    apple: [{ url: "/apple-icon", sizes: "180x180", type: "image/png" }],
-    shortcut: ["/favicon.ico"],
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    shortcut: ["/icon.svg"],
   },
   manifest: "/site.webmanifest",
   openGraph: {
