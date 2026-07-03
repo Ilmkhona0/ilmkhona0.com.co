@@ -37,6 +37,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local OpenCV playground - not part of the website
+/camera-lab
+
 # Local upload fallback - real files live in Vercel Blob, never commit dev test data.
 # Also keeps Google Safe Browsing from flagging the site for serving executables.
 /public/uploads
