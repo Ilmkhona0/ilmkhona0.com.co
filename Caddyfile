@@ -1,0 +1,10 @@
+# Caddy gets a free HTTPS certificate from Let's Encrypt automatically.
+ilmkhona0.com.co, www.ilmkhona0.com.co {
+    reverse_proxy web:3000
+    encode gzip
+
+    # Allow large file uploads (games/apps)
+    request_body {
+        max_size 512MB
+    }
+}

@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.env*
+desktop
+Dockerfile
+docker-compose.yml
+Caddyfile
+DEPLOY-HETZNER.md
+npm-debug.log*
+.vscode
+.idea

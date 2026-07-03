@@ -114,9 +114,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
               isAdmin: true,
             };
           }
-          // Wrong admin password — do NOT fall through to auto-registration,
-          // which previously could mint an admin account for this email.
-          throw new Error("Incorrect admin password.");
+          // Wrong admin password — return null so the login page shows a clean
+          // "incorrect" message instead of Auth.js's scary "Configuration" page.
+          // Returning null still prevents falling through to auto-registration.
+          return null;
         }
 
         const client = await clientPromise;

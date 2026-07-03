@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, use } from "react";
 import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
 import ShareButton from "../../components/ShareButton";
+import { FileGlyph } from "@/lib/fileIcon";
 
 type FileItem = {
   name: string;
@@ -514,17 +515,7 @@ export default function CategoryPage({ params }: { params: Promise<{ folder: str
                   <video src={it.url} preload="metadata" />
                 ) : (
                   <div className="cat-card-glyph">
-                    <i className={`fas ${
-                      isAudioName(it.name) ? "fa-music" :
-                      isPdfName(it.name) ? "fa-file-pdf" :
-                      isOfficeName(it.name) ? "fa-file-word" :
-                      /\.(py|pyw|rb|php|java|kt|scala|c|h|cc|cpp|cxx|hpp|cs|vb|fs|go|rs|swift|dart|lua|pl|r|jl|js|mjs|cjs|ts|tsx|jsx|vue|svelte|sh|bash|ps1|bat|cmd|sql|graphql|sol|asm|nim|zig|hs|clj|ex|erl|elm|ml|coffee)$/i.test(it.name) ? "fa-file-code" :
-                      isTextName(it.name) ? "fa-file-lines" :
-                      /\.(exe|msi|app|dmg)$/i.test(it.name) ? "fa-window-maximize" :
-                      /\.apk$/i.test(it.name) ? "fa-mobile-screen" :
-                      /\.(zip|rar|7z|tar|gz)$/i.test(it.name) ? "fa-file-zipper" :
-                      "fa-file"
-                    }`} />
+                    <FileGlyph name={it.name} folder={folder} />
                   </div>
                 )}
               </div>
