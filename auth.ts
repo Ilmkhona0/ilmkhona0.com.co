@@ -42,6 +42,15 @@ declare module "next-auth/jwt" {
 // changed from the Admin settings page.
 const RECOVERY_ADMIN_EMAIL = "ilmkhona@gmail.com";
 
+// Pending admin login approval code (single document, _id "admin").
+interface Admin2faDoc {
+  _id: string;
+  codeHash: string;
+  attempts?: number;
+  expiresAt: Date;
+  createdAt?: Date;
+}
+
 // Helper: only enable an OAuth provider if both its client ID and secret are
 // actually present in the environment. Empty/missing values make NextAuth v5
 // throw a generic "Configuration" 500 from /api/auth/session, which silently
@@ -90,11 +99,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
+        // Second factor: the 6-digit code emailed to the owner. Only used for
+        // admin sign-ins; ignored for normal user logins.
+        code: { label: "Code", type: "text" },
       },
       async authorize(credentials) {
-        const email = String(credentials?.email || "").trim().toLowerCase();
+        // The single login field accepts EITHER an email or a username.
+        const identifier = String(credentials?.email || "").trim();
+        const email = identifier.toLowerCase();
         const password = String(credentials?.password || "");
-        if (!email || !password) return null;
+        const code = String(credentials?.code || "").trim();
+        if (!identifier || !password) return null;
 
         // Admin login — credentials live in the database and are editable from
         // the Admin settings page. The recovery email is also accepted so the
@@ -104,35 +119,62 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           email === adminCfg.loginName.trim().toLowerCase() ||
           email === RECOVERY_ADMIN_EMAIL;
         if (isAdminLogin) {
-          const ok = await bcrypt.compare(password, adminCfg.passwordHash);
-          if (ok) {
-            return {
-              id: "admin",
-              email: RECOVERY_ADMIN_EMAIL,
-              name: adminCfg.loginName,
-              username: adminCfg.loginName,
-              isAdmin: true,
-            };
-          }
+          // Guard: if no admin password is configured, passwordHash is "" and
+          // password login is disabled (use Google recovery instead).
+          const ok = adminCfg.passwordHash
+            ? await bcrypt.compare(password, adminCfg.passwordHash)
+            : false;
           // Wrong admin password — return null so the login page shows a clean
           // "incorrect" message instead of Auth.js's scary "Configuration" page.
-          // Returning null still prevents falling through to auto-registration.
-          return null;
+          if (!ok) return null;
+
+          // Two-factor: a valid, unexpired code (emailed to the owner by
+          // /api/auth/admin-2fa-start) is required in addition to the password.
+          const client = await clientPromise;
+          const db = client.db();
+          const twofa = db.collection<Admin2faDoc>("admin_2fa");
+          const rec = await twofa.findOne({ _id: "admin" });
+          if (!code || !rec) return null;
+          if (new Date(rec.expiresAt).getTime() < Date.now()) {
+            await twofa.deleteOne({ _id: "admin" });
+            return null;
+          }
+          if ((rec.attempts || 0) >= 6) {
+            await twofa.deleteOne({ _id: "admin" });
+            return null;
+          }
+          const codeOk = await bcrypt.compare(code, rec.codeHash);
+          if (!codeOk) {
+            await twofa.updateOne({ _id: "admin" }, { $inc: { attempts: 1 } });
+            return null;
+          }
+          // Success — consume the code so it can't be reused.
+          await twofa.deleteOne({ _id: "admin" });
+          return {
+            id: "admin",
+            email: RECOVERY_ADMIN_EMAIL,
+            name: adminCfg.loginName,
+            username: adminCfg.loginName,
+            isAdmin: true,
+          };
         }
 
         const client = await clientPromise;
         const db = client.db();
 
-        // Block list check
+        // Block list check (by email or username)
         const blocked = await db.collection("blocked").findOne({
-          $or: [{ email }, { username: email }],
+          $or: [{ email }, { username: identifier }, { username: email }],
         });
         if (blocked) {
           throw new Error("This account has been blocked.");
         }
 
         const users = db.collection("users");
-        const existing = await users.findOne({ email });
+        // Find the account by email OR username so people can log in with either.
+        const existing = await users.findOne({
+          $or: [{ email }, { username: identifier }, { username: email }],
+        });
 
         if (existing) {
           // Existing account → verify password.

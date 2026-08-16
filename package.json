@@ -10,9 +10,7 @@
   },
   "dependencies": {
     "@auth/mongodb-adapter": "^3.11.2",
-    "@vercel/analytics": "^2.0.1",
     "@vercel/blob": "^2.3.3",
-    "@vercel/speed-insights": "^2.0.0",
     "animejs": "^4.4.1",
     "bcryptjs": "^3.0.3",
     "mongodb": "^6.21.0",

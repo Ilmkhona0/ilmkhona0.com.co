@@ -6,6 +6,7 @@ import { useSession, signOut } from "next-auth/react";
 import LoginMenu from "./components/LoginMenu";
 import ThemeToggle from "./components/ThemeToggle";
 import ShareButton from "./components/ShareButton";
+import AdSlot from "./components/AdSlot";
 import { FileGlyph } from "@/lib/fileIcon";
 
 type Comment = {
@@ -1167,6 +1168,13 @@ export default function HomePage() {
       </section>
 
       <main className="home-main">
+        {/* Top banner ad. Replace slot="1111111111" with a real ad-unit id from
+            your AdSense dashboard. Shows nothing until NEXT_PUBLIC_ADSENSE_CLIENT
+            is set and AdSense has approved the site. */}
+        <div style={{ margin: "8px auto 20px", maxWidth: 970, textAlign: "center" }}>
+          <AdSlot slot="1111111111" />
+        </div>
+
         {FOLDERS.map((folder) => (
           <section key={folder} id={folder} className="home-section">
             <SectionHeader folder={folder} />
@@ -1207,6 +1215,12 @@ export default function HomePage() {
           </section>
         ))}
 
+        {/* In-feed ad above the Contact section. Replace slot="2222222222"
+            with a second ad-unit id from your AdSense dashboard. */}
+        <div style={{ margin: "10px auto 24px", maxWidth: 970, textAlign: "center" }}>
+          <AdSlot slot="2222222222" />
+        </div>
+
         <section id="contact" className="home-section">
           <div className="section-header">
             <h2 className="section-title"><i className="fas fa-envelope" /> Contact</h2>
@@ -1224,6 +1238,11 @@ export default function HomePage() {
             <a href="https://www.linkedin.com/in/ilmkhona/" target="_blank" rel="noreferrer" className="contact-link">
               <i className="fab fa-linkedin" /> <span><strong>LinkedIn:</strong> ilmkhona</span>
             </a>
+          </div>
+          <div style={{ marginTop: 18, textAlign: "center" }}>
+            <Link href="/privacy" className="contact-link" style={{ opacity: 0.85 }}>
+              <i className="fas fa-shield-halved" /> <span>Privacy Policy</span>
+            </Link>
           </div>
         </section>
       </main>

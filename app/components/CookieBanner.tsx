@@ -2,6 +2,24 @@
 
 import { useState, useEffect } from "react";
 
+declare global {
+  interface Window {
+    gtag?: (...args: unknown[]) => void;
+  }
+}
+
+// Tells Google (Analytics, Ads, AdSense) what the visitor agreed to.
+// Safe to call even if no Google tag is loaded.
+function updateConsent(granted: boolean) {
+  const value = granted ? "granted" : "denied";
+  window.gtag?.("consent", "update", {
+    ad_storage: value,
+    ad_user_data: value,
+    ad_personalization: value,
+    analytics_storage: value,
+  });
+}
+
 export default function CookieBanner() {
   const [visible, setVisible] = useState(true);
   const [accepted, setAccepted] = useState(false);
@@ -16,11 +34,13 @@ export default function CookieBanner() {
 
   function acceptAll() {
     localStorage.setItem("cookieConsent", "all");
+    updateConsent(true);
     setAccepted(true);
     setVisible(false);
   }
   function acceptNecessary() {
     localStorage.setItem("cookieConsent", "necessary");
+    updateConsent(false);
     setAccepted(true);
     setVisible(false);
   }

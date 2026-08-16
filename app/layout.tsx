@@ -1,8 +1,14 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 import CookieBanner from "./components/CookieBanner";
+import GoogleTags from "./components/GoogleTags";
 import Providers from "./components/Providers";
+
+// Google AdSense publisher id, e.g. "ca-pub-1234567890123456".
+// Set NEXT_PUBLIC_ADSENSE_CLIENT to load ads; leave unset to disable them.
+const ADSENSE_CLIENT = process.env.NEXT_PUBLIC_ADSENSE_CLIENT;
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -82,6 +88,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+        <GoogleTags />
+        {ADSENSE_CLIENT && (
+          <Script
+            id="adsbygoogle-init"
+            async
+            src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}`}
+            crossOrigin="anonymous"
+            strategy="afterInteractive"
+          />
+        )}
         <Providers>
           <CookieBanner />
           {children}
