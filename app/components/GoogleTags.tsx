@@ -6,9 +6,12 @@
 //
 // Renders nothing if neither env var is set, so local dev and previews stay clean.
 //
-// Consent Mode v2: everything starts "denied". CookieBanner calls
-// window.gtag("consent", "update", ...) when the visitor chooses. Google requires
-// this for EU/UK traffic, and AdSense uses the same signal.
+// Consent Mode v2, region-aware:
+//   EEA + UK + Switzerland -> starts "denied". Google's certified CMP (published
+//     in AdSense > Privacy & messaging) shows the consent message and calls
+//     gtag("consent", "update", ...) itself.
+//   Everywhere else -> starts "granted". No consent law requires a prior opt-in
+//     there, and leaving it denied would silently gut Analytics and ad revenue.
 
 import Script from "next/script";
 
@@ -27,23 +30,24 @@ export default function GoogleTags() {
           window.dataLayer = window.dataLayer || [];
           function gtag(){dataLayer.push(arguments);}
           window.gtag = gtag;
+          // EEA (27) + Iceland, Liechtenstein, Norway + UK + Switzerland.
           gtag('consent', 'default', {
             ad_storage: 'denied',
             ad_user_data: 'denied',
             ad_personalization: 'denied',
             analytics_storage: 'denied',
-            wait_for_update: 500
+            wait_for_update: 500,
+            region: ['AT','BE','BG','HR','CY','CZ','DK','EE','FI','FR','DE','GR',
+                     'HU','IE','IT','LV','LT','LU','MT','NL','PL','PT','RO','SK',
+                     'SI','ES','SE','IS','LI','NO','GB','CH']
           });
-          try {
-            if (localStorage.getItem('cookieConsent') === 'all') {
-              gtag('consent', 'update', {
-                ad_storage: 'granted',
-                ad_user_data: 'granted',
-                ad_personalization: 'granted',
-                analytics_storage: 'granted'
-              });
-            }
-          } catch (e) {}
+          // Rest of the world.
+          gtag('consent', 'default', {
+            ad_storage: 'granted',
+            ad_user_data: 'granted',
+            ad_personalization: 'granted',
+            analytics_storage: 'granted'
+          });
         `}
       </Script>
 

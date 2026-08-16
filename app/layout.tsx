@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
-import CookieBanner from "./components/CookieBanner";
+// CookieBanner is retired: Google's certified CMP (AdSense > Privacy & messaging)
+// now handles consent for EEA/UK/CH visitors and feeds it straight into gtag.
+// Two banners would conflict. The component file is kept in case you ever drop
+// AdSense and need your own banner back.
 import GoogleTags from "./components/GoogleTags";
 import Providers from "./components/Providers";
 
@@ -99,7 +102,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           />
         )}
         <Providers>
-          <CookieBanner />
           {children}
         </Providers>
       </body>
