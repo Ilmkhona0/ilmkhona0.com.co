@@ -1,0 +1,62 @@
+# Auto-deploy to the server on every push to main — the Vercel-like bit.
+#
+# Flow: you push -> GitHub SSHes into the server -> deploy.sh pulls the new
+# commit, rebuilds, and restarts. Takes a couple of minutes.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   DEPLOY_HOST     18.197.206.85   (Lightsail static IP of ilmkhona-web)
+#   DEPLOY_USER     ubuntu
+#   DEPLOY_SSH_KEY  the PRIVATE key, whole file including BEGIN/END lines
+#
+# Optional secrets:
+#   DEPLOY_PORT     SSH port (default 22)
+#   DEPLOY_APP_DIR  repo path on the server (default /home/ubuntu/ilmkhona0)
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  # Lets you redeploy by hand from the Actions tab without pushing a commit.
+  workflow_dispatch:
+
+# Never let two deploys touch the server at once.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy over SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_APP_DIR: ${{ secrets.DEPLOY_APP_DIR || '/home/ubuntu/ilmkhona0' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DEPLOY_HOST:-}" ]; then
+            echo "::error::DEPLOY_HOST secret is not set — add it in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # Pin the host key so this can't be silently man-in-the-middled.
+          ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          # Pipe deploy.sh in over stdin: the server runs the version from THIS
+          # commit, so changes to the deploy process ship with the code.
+          ssh -i ~/.ssh/deploy_key \
+              -p "$DEPLOY_PORT" \
+              -o StrictHostKeyChecking=yes \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
+              "APP_DIR='$DEPLOY_APP_DIR' BRANCH=main bash -s" < deploy.sh
