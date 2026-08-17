@@ -1,0 +1,9 @@
+# Shell scripts must keep LF endings. If Windows CRLF gets committed, Linux
+# fails with: bash: line 2: $'\r': command not found
+*.sh text eol=lf
+
+# Same for anything else executed on the server or inside CI.
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
+Caddyfile text eol=lf
