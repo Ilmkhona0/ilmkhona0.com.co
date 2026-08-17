@@ -32,25 +32,19 @@ delete them to avoid confusion.
 
 ---
 
-## Step 1 — Add swap (do this first, one time)
+## Step 1 — Swap (already done)
 
-With 911 MB RAM and ~400 MB free, `next build` gets killed by the kernel
-part-way through. 2 GB of swap fixes it permanently:
+911 MB RAM alone is not enough for `next build`; it gets OOM-killed part-way.
+This box already has **4 GB of swap** active at `/swapfile`, so builds complete.
+Confirm with `free -h` — the Swap row should read `4.0Gi`.
 
-```bash
-sudo fallocate -l 2G /swapfile
-sudo chmod 600 /swapfile
-sudo mkswap /swapfile
-sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-free -h                      # should now show a Swap row of 2.0Gi
-```
-
-The `/etc/fstab` line makes it survive reboots. Verify a build works before
-going further:
+One thing to tidy: `/etc/fstab` may now hold a duplicate `/swapfile` line.
+Harmless (the second `swapon` at boot just fails), but check and remove the
+extra if present:
 
 ```bash
-cd ~/ilmkhona0 && bash deploy.sh
+grep swap /etc/fstab
+sudo nano /etc/fstab      # delete the duplicate line if there are two
 ```
 
 ## Step 2 — Create a deploy key (one time)

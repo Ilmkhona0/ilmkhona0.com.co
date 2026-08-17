@@ -49,9 +49,10 @@ log "Installing dependencies"
 npm ci --no-audit --no-fund
 
 log "Building"
-# This box has ~900 MB RAM. Without swap (see AUTO-DEPLOY.md) the build gets
-# OOM-killed. Capping the heap keeps Node from ballooning past what's available.
-NODE_OPTIONS="--max-old-space-size=768" npm run build
+# 911 MB RAM + 4 GB swap. The heap cap keeps Node from assuming it has the whole
+# machine; the swap absorbs the overflow so the build completes instead of being
+# OOM-killed. Slower than a big box, but reliable.
+NODE_OPTIONS="--max-old-space-size=1536" npm run build
 
 # ---- Restart under pm2 ----
 # Auto-detect the process name so this works regardless of what it was called.
