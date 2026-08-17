@@ -141,6 +141,15 @@ export default function HomePage() {
       PanelSize | null;
     if (saved === "sm" || saved === "md" || saved === "lg" || saved === "xl") setPanelSize(saved);
   }, []);
+  // The panel is anchored bottom-right beneath the sticky header (z-index 1000,
+  // which paints over the panel). Cap the height so growing/dragging can never
+  // push the tab bar up underneath the header where it would be covered.
+  function maxPanelHeight() {
+    const headerH =
+      (document.querySelector(".site-header") as HTMLElement | null)?.offsetHeight ?? 66;
+    return Math.max(300, window.innerHeight - headerH - 96);
+  }
+
   function changePanelSize(delta: 1 | -1) {
     if (typeof window === "undefined") return;
     // Base = current custom dims, or the panel's current rendered size.
@@ -153,7 +162,7 @@ export default function HomePage() {
     // Each click grows/shrinks by 20%, clamped to min/max.
     const factor = delta === 1 ? 1.2 : 1 / 1.2;
     const maxW = Math.min(window.innerWidth - 24, 1100);
-    const maxH = window.innerHeight - 90;
+    const maxH = maxPanelHeight();
     const w = Math.max(300, Math.min(maxW, Math.round(base.w * factor)));
     const h = Math.max(360, Math.min(maxH, Math.round(base.h * factor)));
     const next = { w, h };
@@ -203,7 +212,7 @@ export default function HomePage() {
     const dx = s.x - e.clientX;
     const dy = s.y - e.clientY;
     const maxW = Math.min(window.innerWidth - 24, 1100);
-    const maxH = window.innerHeight - 90;
+    const maxH = maxPanelHeight();
     const w = s.dir === "y" ? s.w : Math.max(300, Math.min(maxW, s.w + dx));
     const h = s.dir === "x" ? s.h : Math.max(360, Math.min(maxH, s.h + dy));
     const next = { w, h };

@@ -3782,14 +3782,35 @@ footer {
   height: min(88vh, 1000px) !important;
 }
 
+/* Height of the sticky site header (12/14px padding + 38px action buttons).
+   The panel uses this to keep its tab bar clear of the header. */
+:root { --site-header-h: 66px; }
+@media (max-width: 600px) { :root { --site-header-h: 62px; } }
+
+/* On every screen, the panel may never grow up underneath the sticky header
+   (z-index 1000, which paints over the panel's z-index 50). */
+.side-panel {
+  max-height: calc(100dvh - var(--site-header-h) - 96px);
+}
+
 @media (max-width: 600px) {
   .side-panel.size-sm,
   .side-panel.size-md,
   .side-panel.size-lg,
-  .side-panel.size-xl {
+  .side-panel.size-xl,
+  .side-panel.size-custom {
     width: calc(100vw - 24px) !important;
     min-width: 0 !important;
-    height: calc(100vh - 90px) !important;
+    /* Anchor to BOTH edges instead of setting a vh height. Two reasons:
+       1. `top` keeps the tab bar below the sticky header, so the header text
+          can never cover it at maximum size.
+       2. No 100vh anywhere — on phones the URL bar collapses while scrolling,
+          which changes the visual viewport and made the fixed panel visibly
+          jump upwards. With top+bottom pinned the panel stays put. */
+    top: calc(var(--site-header-h) + 10px + env(safe-area-inset-top, 0px)) !important;
+    bottom: calc(86px + env(safe-area-inset-bottom, 0px)) !important;
+    height: auto !important;
+    max-height: none !important;
   }
 }
 
@@ -3799,7 +3820,7 @@ footer {
    viewport so a dragged size can never overflow on small screens. */
 .side-panel.size-custom {
   max-width: calc(100vw - 24px);
-  max-height: calc(100dvh - 90px);
+  max-height: calc(100dvh - var(--site-header-h) - 96px);
   min-width: 0;
 }
 
