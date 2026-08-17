@@ -89,15 +89,22 @@ make sure:
 - [ ] Contact info visible.
 - [ ] `/ads.txt` returns the `google.com, pub-…` line in a browser.
 
-### After approval
+### Ad units — DONE (2026-08-17)
 
-1. AdSense → **Ads → By ad unit → Display ads**. Create two units,
-   e.g. `home-top` and `home-feed`.
-2. Each gives a numeric **slot** id. Put them in `app/page.tsx`, replacing the
-   placeholders:
-   - `<AdSlot slot="1111111111" />` → top banner
-   - `<AdSlot slot="2222222222" />` → above Contact
-3. Rebuild, restart. Ads appear within a few hours.
+Two responsive Display ad units were created in AdSense and wired into
+`app/page.tsx`. No placeholders remain:
+
+| Ad unit name    | Slot id      | Where it renders   |
+| --------------- | ------------ | ------------------ |
+| Home top banner | `5588020515` | top of home page   |
+| Home in-feed    | `3890282698` | above Contact      |
+
+Both use `data-ad-format="auto"` + full-width-responsive, which is what
+`AdSlot.tsx` emits.
+
+Nothing more to do in code. The boxes stay blank until Google finishes
+reviewing the site — Sites → approval status is currently **"Getting ready"**.
+Once it flips to **Ready**, ads start appearing within a few hours.
 
 Add more ads anywhere with:
 

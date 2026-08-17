@@ -1168,11 +1168,11 @@ export default function HomePage() {
       </section>
 
       <main className="home-main">
-        {/* Top banner ad. Replace slot="1111111111" with a real ad-unit id from
-            your AdSense dashboard. Shows nothing until NEXT_PUBLIC_ADSENSE_CLIENT
-            is set and AdSense has approved the site. */}
+        {/* Top banner ad — AdSense unit "Home top banner" (created 2026-08-17).
+            Shows nothing until NEXT_PUBLIC_ADSENSE_CLIENT is set and AdSense has
+            approved the site (currently "Getting ready"). */}
         <div style={{ margin: "8px auto 20px", maxWidth: 970, textAlign: "center" }}>
-          <AdSlot slot="1111111111" />
+          <AdSlot slot="5588020515" />
         </div>
 
         {FOLDERS.map((folder) => (
@@ -1215,10 +1215,10 @@ export default function HomePage() {
           </section>
         ))}
 
-        {/* In-feed ad above the Contact section. Replace slot="2222222222"
-            with a second ad-unit id from your AdSense dashboard. */}
+        {/* In-feed ad above the Contact section — AdSense unit "Home in-feed"
+            (created 2026-08-17). */}
         <div style={{ margin: "10px auto 24px", maxWidth: 970, textAlign: "center" }}>
-          <AdSlot slot="2222222222" />
+          <AdSlot slot="3890282698" />
         </div>
 
         <section id="contact" className="home-section">
