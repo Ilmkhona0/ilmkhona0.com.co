@@ -46,17 +46,43 @@ jobs:
             exit 1
           fi
 
+          echo "Target: $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PORT  dir=$DEPLOY_APP_DIR"
+
           mkdir -p ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
+          # Catch a truncated or mangled key before blaming the network.
+          if ! ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null 2>&1; then
+            echo "::error::DEPLOY_SSH_KEY is not a valid private key. Re-copy the WHOLE output of 'cat ~/.ssh/github_deploy', including the BEGIN and END lines."
+            exit 1
+          fi
+          echo "Key parsed OK. Public half:"
+          ssh-keygen -y -f ~/.ssh/deploy_key
+
           # Pin the host key so this can't be silently man-in-the-middled.
-          ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -T 10 -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          if [ ! -s ~/.ssh/known_hosts ]; then
+            echo "::error::No SSH host key from $DEPLOY_HOST:$DEPLOY_PORT — the port is closed or filtered. In the Lightsail console open ilmkhona-web > Networking > IPv4 firewall and allow SSH (TCP 22) from Any IPv4 address."
+            exit 1
+          fi
+          echo "Host reachable, host key pinned."
 
           # Pipe deploy.sh in over stdin: the server runs the version from THIS
           # commit, so changes to the deploy process ship with the code.
           ssh -i ~/.ssh/deploy_key \
               -p "$DEPLOY_PORT" \
               -o StrictHostKeyChecking=yes \
+              -o BatchMode=yes \
+              -o ConnectTimeout=15 \
               "$DEPLOY_USER@$DEPLOY_HOST" \
-              "APP_DIR='$DEPLOY_APP_DIR' BRANCH=main bash -s" < deploy.sh
+              "APP_DIR='$DEPLOY_APP_DIR' BRANCH=main bash -s" < deploy.sh \
+          || {
+            code=$?
+            if [ "$code" = "255" ]; then
+              echo "::error::SSH could not log in. Most likely the public key is missing from the server. On the server run: cat ~/.ssh/github_deploy.pub >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+            else
+              echo "::error::deploy.sh failed on the server with exit code $code — see the output above."
+            fi
+            exit $code
+          }
