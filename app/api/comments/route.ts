@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
 import clientPromise from "../../../lib/mongodb";
 import { ObjectId, type Db } from "mongodb";
 
@@ -26,8 +27,13 @@ type CommentDoc = {
   dislikes: number;
 };
 
-function isAdminReq(req: NextRequest): boolean {
-  return req.cookies.get("role")?.value === "admin";
+// Admin check. This used to read a "role" cookie set by the old /api/auth/login
+// route — but the site moved to NextAuth, nothing sets that cookie any more, so
+// the check always failed and the admin Delete button silently did nothing.
+// The session is the single source of truth now, same as /api/admin/account.
+async function isAdminReq(): Promise<boolean> {
+  const session = await auth();
+  return !!session?.user?.isAdmin;
 }
 
 // How many comments a single GET returns at most. Keeps each request light
@@ -111,11 +117,38 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Duplicate guard. A slow network makes people click "Submit" twice, and a
+    // browser/proxy may also retry the POST — either way the same comment was
+    // landing in the database two (or more) times. If an identical comment from
+    // the same author under the same parent arrived in the last 30 seconds,
+    // treat this request as that same comment instead of inserting a new row.
+    const DEDUPE_WINDOW_MS = 30_000;
+    const parentOid = parentId ? new ObjectId(parentId) : null;
+    const recent = await db.collection<CommentDoc>("comments").findOne({
+      text,
+      author,
+      parentId: parentOid,
+      date: { $gte: new Date(Date.now() - DEDUPE_WINDOW_MS).toISOString() },
+    });
+    if (recent) {
+      return NextResponse.json({
+        id: recent._id.toString(),
+        text,
+        author,
+        authorId,
+        parentId,
+        date: recent.date,
+        likes: recent.likes ?? 0,
+        dislikes: recent.dislikes ?? 0,
+        duplicate: true,
+      });
+    }
+
     const doc = {
       text,
       author,
       authorId,
-      parentId: parentId ? new ObjectId(parentId) : null,
+      parentId: parentOid,
       date: new Date().toISOString(),
       likes: 0,
       dislikes: 0,
@@ -150,7 +183,7 @@ export async function PATCH(req: NextRequest) {
 
 // ---------- DELETE: admin removes a comment + cascades to replies ----------
 export async function DELETE(req: NextRequest) {
-  if (!isAdminReq(req)) {
+  if (!(await isAdminReq())) {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
   const { searchParams } = new URL(req.url);

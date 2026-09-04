@@ -105,7 +105,75 @@ export default function HomePage() {
   const user = session?.user;
   const isAdmin = !!user?.isAdmin;
 
+  // The drawer is controlled ONLY by the hamburger / ✕ button. A page load,
+  // navigation, backdrop click or menu-link click must never change it, so the
+  // open/closed state is persisted and restored instead of resetting to false.
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const menuRestored = useRef(false);
+  useEffect(() => {
+    try {
+      setMobileMenuOpen(localStorage.getItem("menuOpen") === "1");
+    } catch { /* ignore */ }
+    menuRestored.current = true;
+  }, []);
+  useEffect(() => {
+    if (!menuRestored.current) return; // don't clobber the saved value on first paint
+    try {
+      localStorage.setItem("menuOpen", mobileMenuOpen ? "1" : "0");
+    } catch { /* ignore */ }
+  }, [mobileMenuOpen]);
+
+  // ---- Drag-to-resize the sidebar drawer ----
+  // The drawer is anchored to the left edge, so its width is simply how far
+  // right the cursor is. Width is fed to CSS as the --sidebar-w custom property
+  // (the stylesheet sets width with !important, which an inline width could not
+  // beat) and remembered between visits.
+  const [sidebarWidth, setSidebarWidth] = useState<number | null>(null);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
+  const latestSidebarW = useRef<number | null>(null);
+
+  const SIDEBAR_MIN = 200;
+  function sidebarMax() {
+    return Math.min(520, Math.max(SIDEBAR_MIN, window.innerWidth - 60));
+  }
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("sidebarWidth");
+      const n = raw ? parseInt(raw, 10) : NaN;
+      if (Number.isFinite(n)) {
+        setSidebarWidth(n);
+        latestSidebarW.current = n;
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  function onSidebarResizeDown(e: React.PointerEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setSidebarResizing(true);
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  }
+  function onSidebarResizeMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!sidebarResizing) return;
+    const w = Math.round(Math.max(SIDEBAR_MIN, Math.min(sidebarMax(), e.clientX)));
+    latestSidebarW.current = w;
+    setSidebarWidth(w);
+  }
+  function onSidebarResizeUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (!sidebarResizing) return;
+    setSidebarResizing(false);
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    try {
+      if (latestSidebarW.current) localStorage.setItem("sidebarWidth", String(latestSidebarW.current));
+    } catch { /* ignore */ }
+  }
+  // Double-click the handle to go back to the default width.
+  function resetSidebarWidth() {
+    setSidebarWidth(null);
+    latestSidebarW.current = null;
+    try { localStorage.removeItem("sidebarWidth"); } catch { /* ignore */ }
+  }
+
   const [scrolled, setScrolled] = useState(false);
 
   const [files, setFiles] = useState<Record<Folder, FileItem[]>>({
@@ -125,6 +193,12 @@ export default function HomePage() {
   const [comments, setComments] = useState<Comment[]>([]);
   const [votes, setVotes] = useState<Record<string, Vote>>({});
   const [commentText, setCommentText] = useState("");
+  // In-flight guards. Posting a comment takes a moment (network + DB), and
+  // without these a second click before the request resolves inserted the same
+  // comment twice.
+  const [postingComment, setPostingComment] = useState(false);
+  const postingRef = useRef(false);
+  const [postingReply, setPostingReply] = useState<string | null>(null);
   const [replyOpen, setReplyOpen] = useState<Record<string, boolean>>({});
   const [replyText, setReplyText] = useState<Record<string, string>>({});
   const [showReplies, setShowReplies] = useState<Record<string, boolean>>({});
@@ -529,8 +603,15 @@ export default function HomePage() {
 
   async function submitComment() {
     if (!user) return alert("Please log in to post a comment.");
+    // The ref blocks a second click in the same tick (before React re-renders
+    // with the disabled button); the state drives the disabled/"Posting…" UI.
+    if (postingRef.current) return;
     const text = commentText.trim();
     if (!text) return alert("Comment cannot be empty.");
+    postingRef.current = true;
+    setPostingComment(true);
+    // Clear immediately so a fast second click has nothing left to send.
+    setCommentText("");
     try {
       const res = await fetch("/api/comments", {
         method: "POST",
@@ -539,19 +620,26 @@ export default function HomePage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
+        setCommentText(text); // put it back so the user doesn't lose their words
         return alert(data.error || "Failed to post comment");
       }
-      setCommentText("");
       await refreshComments();
     } catch (err) {
+      setCommentText(text);
       alert(err instanceof Error ? err.message : "Failed to post comment");
+    } finally {
+      postingRef.current = false;
+      setPostingComment(false);
     }
   }
 
   async function submitReply(parentId: string) {
     if (!user) return alert("Please log in to reply.");
+    if (postingReply) return; // a reply is already in flight — ignore double clicks
     const text = (replyText[parentId] || "").trim();
     if (!text) return;
+    setPostingReply(parentId);
+    setReplyText((prev) => ({ ...prev, [parentId]: "" }));
     try {
       const res = await fetch("/api/comments", {
         method: "POST",
@@ -560,14 +648,17 @@ export default function HomePage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
+        setReplyText((prev) => ({ ...prev, [parentId]: text }));
         return alert(data.error || "Failed to post reply");
       }
-      setReplyText((prev) => ({ ...prev, [parentId]: "" }));
       setReplyOpen((prev) => ({ ...prev, [parentId]: false }));
       setShowReplies((prev) => ({ ...prev, [parentId]: true }));
       await refreshComments();
     } catch (err) {
+      setReplyText((prev) => ({ ...prev, [parentId]: text }));
       alert(err instanceof Error ? err.message : "Failed to post reply");
+    } finally {
+      setPostingReply(null);
     }
   }
 
@@ -982,8 +1073,30 @@ export default function HomePage() {
         </div>
         <div className="comment-text">{c.text}</div>
         <div className="comment-actions">
-          <button className={`vote-btn like ${myVote === "like" ? "active" : ""}`} onClick={() => voteComment(c.id, "like")} aria-pressed={myVote === "like"}>👍 <span>{c.likes}</span></button>
-          <button className={`vote-btn dislike ${myVote === "dislike" ? "active" : ""}`} onClick={() => voteComment(c.id, "dislike")} aria-pressed={myVote === "dislike"}>👎 <span>{c.dislikes}</span></button>
+          {/* Font Awesome icons, NOT the 👍/👎 emoji. An emoji paints its own
+              colour from the emoji font, so `color:` can never make it black —
+              that is why these stayed yellow. Outline icon = not voted,
+              solid icon = voted, exactly like a social feed. */}
+          <button
+            className={`vote-btn like ${myVote === "like" ? "active" : ""}`}
+            onClick={() => voteComment(c.id, "like")}
+            aria-pressed={myVote === "like"}
+            aria-label="Like"
+            title="Like"
+          >
+            <i className={`${myVote === "like" ? "fas" : "far"} fa-thumbs-up`} />
+            <span>{c.likes}</span>
+          </button>
+          <button
+            className={`vote-btn dislike ${myVote === "dislike" ? "active" : ""}`}
+            onClick={() => voteComment(c.id, "dislike")}
+            aria-pressed={myVote === "dislike"}
+            aria-label="Dislike"
+            title="Dislike"
+          >
+            <i className={`${myVote === "dislike" ? "fas" : "far"} fa-thumbs-down`} />
+            <span>{c.dislikes}</span>
+          </button>
           {!isReply && <button className="reply-btn" onClick={() => setReplyOpen((p) => ({ ...p, [c.id]: !p[c.id] }))}>Reply</button>}
           {isAdmin && (
             <>
@@ -1002,7 +1115,12 @@ export default function HomePage() {
             />
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 6 }}>
               <button onClick={() => setReplyOpen((p) => ({ ...p, [c.id]: false }))}>Cancel</button>
-              <button onClick={() => submitReply(c.id)} disabled={!user}>Post reply</button>
+              <button
+                onClick={() => submitReply(c.id)}
+                disabled={!user || postingReply === c.id || !(replyText[c.id] || "").trim()}
+              >
+                {postingReply === c.id ? "Posting…" : "Post reply"}
+              </button>
             </div>
           </div>
         )}
@@ -1073,20 +1191,23 @@ export default function HomePage() {
         </div>
       </header>
 
+      {/* Dim/blur only — closing is the hamburger's ✕ job, so no click handler. */}
       <div
         className={`sidebar-backdrop ${mobileMenuOpen ? "is-visible" : ""}`}
-        onClick={() => setMobileMenuOpen(false)}
         aria-hidden="true"
       />
 
-      <aside className={`sidebar ${mobileMenuOpen ? "open" : ""}`}>
+      <aside
+        className={`sidebar ${mobileMenuOpen ? "open" : ""} ${sidebarResizing ? "is-resizing" : ""}`}
+        style={sidebarWidth ? ({ "--sidebar-w": `${sidebarWidth}px` } as React.CSSProperties) : undefined}
+      >
         <div className="sidebar-section-label">Browse</div>
         {FOLDERS.map((f) => (
-          <Link key={f} href={`/category/${f}`} onClick={() => setMobileMenuOpen(false)}>
+          <Link key={f} href={`/category/${f}`}>
             <i className={`fas ${SECTION_ICON[f]}`} /> {SECTION_LABEL[f]}
           </Link>
         ))}
-        <a href="#contact" onClick={() => setMobileMenuOpen(false)}>
+        <a href="#contact">
           <i className="fas fa-envelope" /> Contact
         </a>
         <ShareButton className="sidebar-link" label="Share this site" />
@@ -1094,7 +1215,7 @@ export default function HomePage() {
           <>
             <div className="sidebar-divider" />
             <div className="sidebar-section-label">Admin</div>
-            <Link href="/admin" onClick={() => setMobileMenuOpen(false)}>
+            <Link href="/admin">
               <i className="fas fa-shield-halved" /> Admin
             </Link>
           </>
@@ -1106,16 +1227,34 @@ export default function HomePage() {
           <button
             type="button"
             className="sidebar-link sidebar-logout"
-            onClick={() => { setMobileMenuOpen(false); logout(); }}
+            onClick={() => logout()}
           >
             <i className="fas fa-right-from-bracket" /> Log out
           </button>
         ) : (
-          <Link href="/auth" onClick={() => setMobileMenuOpen(false)}>
+          <Link href="/auth">
             <i className="fas fa-right-to-bracket" /> Log in
           </Link>
         )}
       </aside>
+
+      {/* Drag handle on the drawer's right edge. Kept as a sibling rather than a
+          child so it can't scroll away with the drawer's content. */}
+      {mobileMenuOpen && (
+        <div
+          className={`sidebar-resize ${sidebarResizing ? "is-active" : ""}`}
+          style={sidebarWidth ? ({ "--sidebar-w": `${sidebarWidth}px` } as React.CSSProperties) : undefined}
+          onPointerDown={onSidebarResizeDown}
+          onPointerMove={onSidebarResizeMove}
+          onPointerUp={onSidebarResizeUp}
+          onPointerCancel={onSidebarResizeUp}
+          onDoubleClick={resetSidebarWidth}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Drag to resize the menu (double-click to reset)"
+          title="Drag to resize · double-click to reset"
+        />
+      )}
 
       <section className="hero">
         <div className="hero-bg" />
@@ -1258,7 +1397,7 @@ export default function HomePage() {
 
       {/* ===== Floating button + tabbed panel (Comments / AI Chat) ===== */}
       <button
-        className="comments-fab"
+        className={`comments-fab ${panelOpen ? "is-open" : ""}`}
         onClick={() => setPanelOpen((p) => !p)}
         aria-label={panelOpen ? "Close panel" : "Open Comments and AI"}
         title="Comments & AI"
@@ -1345,7 +1484,13 @@ export default function HomePage() {
                   <label className="comment-form-label">Your Comment</label>
                   <textarea value={commentText} onChange={(e) => setCommentText(e.target.value)} placeholder="Write a comment..." />
                   <div style={{ marginTop: 8 }}>
-                    <button onClick={submitComment} className="submit-btn">Submit</button>
+                    <button
+                      onClick={submitComment}
+                      className="submit-btn"
+                      disabled={postingComment || !commentText.trim()}
+                    >
+                      {postingComment ? "Posting…" : "Submit"}
+                    </button>
                   </div>
                 </div>
               ) : (

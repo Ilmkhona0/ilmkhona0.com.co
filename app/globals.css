@@ -493,60 +493,80 @@ footer {
 }
 
 .ilmkhona0 .submit-btn:hover { background: #1976d2; }
+.ilmkhona0 .submit-btn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+  background: #2196f3;
+}
 
 .ilmkhona0 .comments-list {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 6px;
   margin-top: 8px;
 }
 
+/* Comment typography — compact, the scale social feeds use (13px body,
+   12px name, 11px timestamp) rather than article-sized text. */
 .ilmkhona0 .comment-row {
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid rgba(0,0,0,0.06);
+  font-size: 13px;
 }
 
 .ilmkhona0 .comment-row.is-reply {
   border-bottom: none;
-  padding: 8px 12px;
+  padding: 6px 10px;
+  font-size: 12.5px;
 }
 
 .ilmkhona0 .comment-head {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 8px;
+}
+
+.ilmkhona0 .comment-head strong {
+  font-size: 12.5px;
+  font-weight: 600;
 }
 
 .ilmkhona0 .comment-date {
-  color: #888;
-  font-size: 12px;
+  color: #8a8f98;
+  font-size: 11px;
 }
 
 .ilmkhona0 .comment-text {
-  margin: 4px 0 8px;
+  margin: 2px 0 6px;
   color: #222;
-  line-height: 1.4;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
+
+.ilmkhona0 .comment-row.is-reply .comment-text { font-size: 12.5px; }
 
 .ilmkhona0 .comment-actions {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
-/* Vote buttons: transparent by default, colored when active (YouTube-style) */
+/* Vote buttons: transparent by default, black when active (social-media style) */
 .ilmkhona0 .vote-btn {
   background: transparent;
   color: #555;
   border: none;
-  padding: 4px 8px;
+  padding: 3px 7px;
   border-radius: 999px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 14px;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.3;
   transition: background .15s ease, color .15s ease, transform .08s ease;
 }
 
@@ -554,19 +574,45 @@ footer {
   background: rgba(0,0,0,0.05);
 }
 
+/* The thumb icons inherit the button's colour (unlike the old emoji, which
+   painted itself yellow no matter what CSS said). */
+.ilmkhona0 .vote-btn i {
+  font-size: 12px;
+  color: inherit;
+  line-height: 1;
+}
+.ilmkhona0 .vote-btn.active i,
+.ilmkhona0 .vote-btn[aria-pressed="true"] i { color: #000; }
+[data-theme="dark"] .ilmkhona0 .vote-btn.active i,
+[data-theme="dark"] .ilmkhona0 .vote-btn[aria-pressed="true"] i { color: #fff; }
+
 .ilmkhona0 .vote-btn:active { transform: scale(.96); }
 
-/* Active states — yellow tint like in your screenshot */
-.ilmkhona0 .vote-btn.like.active {
-  background: rgba(255, 193, 7, 0.18);
-  color: #f9a825;
+/* Active states — transparent background, black text (no yellow/orange tint).
+   The vote reads as "on" through weight + a thin dark ring, like X/Instagram. */
+.ilmkhona0 .vote-btn.like.active,
+.ilmkhona0 .vote-btn.dislike.active,
+.ilmkhona0 .vote-btn.like[aria-pressed="true"],
+.ilmkhona0 .vote-btn.dislike[aria-pressed="true"] {
+  background: transparent !important;
+  color: #000 !important;
   font-weight: 700;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
 
-.ilmkhona0 .vote-btn.dislike.active {
-  background: rgba(255, 152, 0, 0.18);
-  color: #ef6c00;
-  font-weight: 700;
+.ilmkhona0 .vote-btn.active:hover,
+.ilmkhona0 .vote-btn[aria-pressed="true"]:hover {
+  background: rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Dark theme: the same idea, inverted — transparent with white text. */
+[data-theme="dark"] .ilmkhona0 .vote-btn.like.active,
+[data-theme="dark"] .ilmkhona0 .vote-btn.dislike.active,
+[data-theme="dark"] .ilmkhona0 .vote-btn.like[aria-pressed="true"],
+[data-theme="dark"] .ilmkhona0 .vote-btn.dislike[aria-pressed="true"] {
+  background: transparent !important;
+  color: #fff !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
 }
 
 /* Reply / delete / show-replies links */
@@ -576,9 +622,9 @@ footer {
   border: none;
   color: #1976d2;
   cursor: pointer;
-  padding: 4px 6px;
+  padding: 3px 6px;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .ilmkhona0 .reply-btn:hover,
@@ -588,10 +634,10 @@ footer {
   background: #c62828;
   color: #fff;
   border: none;
-  padding: 4px 10px;
+  padding: 3px 9px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 11.5px;
 }
 
 .ilmkhona0 .delete-btn:hover { background: #b71c1c; }
@@ -600,10 +646,10 @@ footer {
   background: #424242;
   color: #fff;
   border: none;
-  padding: 4px 10px;
+  padding: 3px 9px;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 11.5px;
 }
 .ilmkhona0 .block-btn:hover { background: #212121; }
 
@@ -1071,14 +1117,21 @@ footer {
     /* keep button, just compact */
   }
 
-  /* Floating chat FAB and panel sizing */
+  /* Floating chat FAB and panel sizing.
+     Phone browsers park their own toolbar over the last ~60-90px of the
+     viewport, so a FAB pinned near bottom:0 sits under it (or under the
+     thumb-rest area) and reads as "too low". Lift it clear of that, plus the
+     iOS home-indicator inset. */
   .ilmkhona0 .comments-fab {
     right: 14px !important;
-    bottom: 14px !important;
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px)) !important;
     width: 50px !important;
     height: 50px !important;
     font-size: 20px !important;
   }
+  /* While the panel is open the panel has its own ✕, and the raised FAB would
+     sit on top of the panel — so get it out of the way on phones. */
+  .ilmkhona0 .comments-fab.is-open { display: none !important; }
   .ilmkhona0 .comments-panel { width: 100vw !important; }
 
   /* Contact links wrap nicely on small screens */
@@ -1087,11 +1140,11 @@ footer {
     box-sizing: border-box;
   }
 
-  /* Cookie banner: sit above the FAB, full width */
+  /* Cookie banner: sit above the (now raised) FAB, full width */
   .cookie-banner {
     width: calc(100vw - 24px) !important;
     min-width: 0 !important;
-    bottom: 90px !important;
+    bottom: calc(140px + env(safe-area-inset-bottom, 0px)) !important;
     padding: 14px 18px !important;
     font-size: 14px !important;
   }
@@ -1103,7 +1156,8 @@ footer {
   .ilmkhona0 main section h2 { font-size: 16px !important; }
   .ilmkhona0 .vote-btn,
   .ilmkhona0 .reply-btn,
-  .ilmkhona0 .show-replies { font-size: 13px !important; }
+  .ilmkhona0 .show-replies { font-size: 12px !important; }
+  .ilmkhona0 .comment-text { font-size: 12.5px !important; }
 }
 
 /* =============================================================
@@ -3361,8 +3415,11 @@ footer {
   backdrop-filter: saturate(180%) blur(16px);
   -webkit-backdrop-filter: saturate(180%) blur(16px);
 
-  width: 280px !important;
-  left: -300px !important;
+  /* Width comes from --sidebar-w, which the drag handle sets inline. A plain
+     inline width could not win against this !important rule, but a custom
+     property read from inside it can. */
+  width: var(--sidebar-w, 280px) !important;
+  left: calc(-1 * var(--sidebar-w, 280px) - 24px) !important;
   padding-top: 12px !important;
   box-shadow:
     24px 0 60px -12px rgba(15,23,42,0.18),
@@ -3441,10 +3498,57 @@ footer {
   margin: 14px 22px 0;
 }
 
-/* Tighter on small phones */
+/* Tighter on small phones (still overridable by a dragged width) */
 @media (max-width: 420px) {
-  .sidebar { width: 86vw !important; left: calc(-86vw - 20px) !important; }
+  .sidebar {
+    width: var(--sidebar-w, 86vw) !important;
+    left: calc(-1 * var(--sidebar-w, 86vw) - 24px) !important;
+  }
 }
+
+/* ---------- Sidebar drag-to-resize handle ---------- */
+.sidebar-resize {
+  position: fixed;
+  top: 66px;
+  bottom: 0;
+  /* Straddle the drawer's right edge so it's easy to grab. */
+  left: calc(var(--sidebar-w, 280px) - 5px);
+  width: 12px;
+  cursor: col-resize;
+  z-index: 1000;
+  touch-action: none;        /* let a finger drag it instead of scrolling */
+  background: transparent;
+  transition: background .15s ease;
+}
+/* A thin visible grip line, brighter on hover/drag. */
+.sidebar-resize::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 46px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.18);
+  transition: background .15s ease, height .15s ease;
+}
+.sidebar-resize:hover::after,
+.sidebar-resize.is-active::after {
+  background: var(--brand-500, #3b82f6);
+  height: 72px;
+}
+/* While dragging, kill the drawer's slide transition so it tracks the cursor
+   instead of easing behind it, and stop the page selecting text. */
+.sidebar.is-resizing { transition: none !important; }
+.sidebar-resize.is-active { background: rgba(59, 130, 246, 0.08); }
+body:has(.sidebar-resize.is-active) { user-select: none; }
+
+@media (max-width: 420px) {
+  .sidebar-resize { left: calc(var(--sidebar-w, 86vw) - 5px); }
+}
+
+[data-theme="dark"] .sidebar-resize::after { background: rgba(255, 255, 255, 0.22); }
 
 /* Backdrop should also start below the header so the header stays clickable */
 .sidebar-backdrop {

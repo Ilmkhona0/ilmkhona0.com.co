@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
 import clientPromise from "../../../../lib/mongodb";
 
 /**
@@ -8,10 +9,13 @@ import clientPromise from "../../../../lib/mongodb";
  * register again, or post comments. Looks up the matching user
  * to capture both username AND email if only one is supplied.
  *
- * Admin-only via the role cookie set in /api/auth/login.
+ * Admin-only via the NextAuth session. (This previously checked a "role" cookie
+ * set by the old /api/auth/login route; that route is gone, nothing sets the
+ * cookie, so every Block click was rejected as "Admin only".)
  */
 export async function POST(req: NextRequest) {
-  if (req.cookies.get("role")?.value !== "admin") {
+  const session = await auth();
+  if (!session?.user?.isAdmin) {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
 

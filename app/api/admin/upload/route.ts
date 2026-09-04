@@ -1,10 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
+
+/**
+ * Admin gate for every handler in this file.
+ *
+ * These endpoints upload, rename and delete files. The client only shows the
+ * matching buttons to admins, but hiding a button does not protect the endpoint
+ * behind it — anyone who knew the URL could call these directly. Every handler
+ * now verifies the NextAuth session server-side before touching storage.
+ *
+ * Returns a 401 response to send back, or null when the caller is an admin.
+ */
+async function requireAdmin(): Promise<NextResponse | null> {
+  const session = await auth();
+  if (!session?.user?.isAdmin) {
+    return NextResponse.json({ error: "Admin only" }, { status: 401 });
+  }
+  return null;
+}
 
 /**
  * DELETE /api/admin/upload?url=<file-url>
  * Removes a file from Vercel Blob (production) or from public/uploads (local dev).
  */
 export async function DELETE(req: NextRequest) {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
   const { searchParams } = new URL(req.url);
   const url = searchParams.get("url");
   if (!url) {
@@ -48,6 +70,9 @@ export async function DELETE(req: NextRequest) {
  * on local fs it's a real rename.
  */
 export async function PATCH(req: NextRequest) {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
   const body = (await req.json().catch(() => ({}))) as {
     url?: string;
     newName?: string;
@@ -133,6 +158,9 @@ export async function PATCH(req: NextRequest) {
  * - Otherwise (plain local dev), fall back to writing into /public/uploads/.
  */
 export async function POST(req: NextRequest) {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
